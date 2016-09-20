@@ -19,7 +19,10 @@ package com.liulishuo.filedownloader.util;
 import android.util.Log;
 
 /**
- * Created by Jacksgong on 12/17/15.
+ * The log printer help to control all logs in FileDownloader.
+ * <p>
+ * If you want to print all priority FileDownloader logs, please set true to {@link #NEED_LOG},
+ * otherwise, we just print the log which priority higher than or equal to {@link Log#WARN}.
  */
 public class FileDownloadLog {
 
@@ -61,7 +64,7 @@ public class FileDownloadLog {
             return;
         }
 
-        Log.println(priority, getTag(o), String.format(message, args));
+        Log.println(priority, getTag(o), FileDownloadUtils.formatString(message, args));
         if (throwable != null) {
             throwable.printStackTrace();
         }

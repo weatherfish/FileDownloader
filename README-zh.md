@@ -1,23 +1,28 @@
 # FileDownloader
 Android 文件下载引擎，稳定、高效、简单易用
 
+[![Gitter][gitter_svg]][gitter_url]
 [![Download][bintray_svg]][bintray_url]
 ![][file_downloader_svg]
 [![Build Status][build_status_svg]][build_status_link]
 
 > [README DOC](https://github.com/lingochamp/FileDownloader/blob/master/README.md)
 
-> 本引擎依赖okhttp 3.1.2
+> 本引擎依赖okhttp 3.4.1
 
 ---
+
 #### 版本迭代日志: [Change Log](https://github.com/lingochamp/FileDownloader/blob/master/CHANGELOG.md)
+
+#### 英文文档: [Wiki](https://github.com/lingochamp/FileDownloader/wiki)
+
 ---
 
 ### 特点
 
 - 简单易用
 - 高并发
-- 独立进程
+- 可选择性支持: 独立/非独立进程
 - 自动断点续传
 
 #### 需要注意
@@ -25,11 +30,23 @@ Android 文件下载引擎，稳定、高效、简单易用
 - 当下载的文件大小可能大于1.99GB(2^31-1`=2_147_483_647 = 1.99GB`)的时候, 请使用`FileDownloadLargeFileListener`而不是`FileDownloadListener`(同理使用`getLargeFileSofarBytes()`与`getLargeFileTotalBytes()`)
 - 暂停: paused, 恢复: 直接调用start，默认就是断点续传
 - 引擎默认会打开避免掉帧的处理(使得在有些情况下回调(FileDownloadListener)不至于太频繁导致ui线程被ddos), 如果你希望关闭这个功能（关闭以后，所有回调会与0.1.9之前的版本一样，所有的回调会立马抛一个消息ui线程(Handler)）
+- 如果没有特殊需要，直接通过配置`filedownloader.properties`将`process.non-separate`置为`true`，可以有效减少每次回调IPC带来的I/O。
 
 #### 使用okHttp并使用其中的一些默认属性
 
 - retryOnConnectionFailure: Unreachable IP addresses/Stale pooled connections/Unreachable proxy servers
 - connection/read/write time out 10s
+
+---
+
+## 欢迎提交 Pull requests
+
+- 尽量多的英文注解。
+- 每个提交尽量的细而精准。
+- Commit message 遵循: [AngularJS's commit message convention](https://github.com/angular/angular.js/blob/master/CONTRIBUTING.md#-git-commit-guidelines)。
+- 尽可能的遵循IDE的代码检查建议(如 Android Studio 的 'Inspect Code')。
+
+---
 
 ## I. 效果
 
@@ -45,22 +62,26 @@ Android 文件下载引擎，稳定、高效、简单易用
 
 在项目中引用:
 
+```groovy
+compile 'com.liulishuo.filedownloader:library:1.1.0'
 ```
-compile 'com.liulishuo.filedownloader:library:0.1.9'
-```
+
+> 如果是eclipse引入jar包参考: [这里](https://github.com/lingochamp/FileDownloader/issues/212#issuecomment-232240415)
 
 #### 全局初始化在`Application.onCreate`中
 
 > 如果希望定制化用于下载的`OkHttpClient`，建议参考[DemoApplication](https://github.com/lingochamp/FileDownloader/blob/master/demo/src/main/java/com/liulishuo/filedownloader/demo/DemoApplication.java)
 
-```
+```java
 public XXApplication extends Application{
 
     ...
     @Override
     public void onCreate() {
-        // 不耗时，仅仅只是缓存下Application的Context不会启动下载进程
-        FileDownloader.init(this);
+        /**
+         * 仅仅是缓存Application的Context，不耗时
+         */
+        FileDownloader.init(getApplicationContext);
     }
 
     ...
@@ -69,7 +90,7 @@ public XXApplication extends Application{
 
 #### 启动单任务下载
 
-```
+```java
 FileDownloader.getImpl().create(url)
         .setPath(path)
         .setListener(new FileDownloadListener() {
@@ -113,7 +134,7 @@ FileDownloader.getImpl().create(url)
 
 #### 启动多任务下载
 
-```
+```java
 final FileDownloadListener queueTarget = new FileDownloadListener() {
     @Override
     protected void pending(BaseDownloadTask task, int soFarBytes, int totalBytes) {
@@ -158,7 +179,8 @@ final FileDownloadListener queueTarget = new FileDownloadListener() {
 //    FileDownloader.getImpl().create(url)
 //            .setCallbackProgressTimes(0) // 由于是队列任务, 这里是我们假设了现在不需要每个任务都回调`FileDownloadListener#progress`, 我们只关系每个任务是否完成, 所以这里这样设置可以很有效的减少ipc.
 //            .setListener(queueTarget)
-//            .ready();
+//            .asInQueueTask()
+//            .enqueue();
 //}
 
 //if(serial){
@@ -214,24 +236,34 @@ if (parallel) {
 
 | 方法名 | 备注
 | --- | ---
-| init(Application) |  简单初始化，不会启动下载进程
+| init(Context) |  缓存Context，不会启动下载进程
+| init(Context, OkHttpClientCustomMaker) | 缓存Context，不会启动下载进程；在下载进程启动的时候，初始化OkHttpClient
+| init(Context, OkHttpClientCustomMaker, int) | 缓存Context，不会启动下载进程；在下载进程启动的时候，初始化OkHttpClient，并且根据提供的最大同时下载数创建网络线程线程池
 | create(url:String) | 创建一个下载任务
 | start(listener:FileDownloadListener, isSerial:boolean) | 启动是相同监听器的任务，串行/并行启动
 | pause(listener:FileDownloadListener) | 暂停启动相同监听器的任务
 | pauseAll(void) | 暂停所有任务
-| pause(downloadId) | 启动downloadId的任务
+| pause(downloadId) | 暂停downloadId的任务
+| clear(downloadId, targetFilePath) | 强制清理ID为downloadId的任务在filedownloader中的数据
 | getSoFar(downloadId) | 获得下载Id为downloadId的soFarBytes
 | getTotal(downloadId) | 获得下载Id为downloadId的totalBytes
 | bindService(void) | 主动启动下载进程(可事先调用该方法(可以不调用)，保证第一次下载的时候没有启动进程的速度消耗)
 | unBindService(void) | 主动关停下载进程
 | unBindServiceIfIdle(void) | 如果目前下载进程没有任务正在执行，则关停下载进程
 | isServiceConnected(void) | 是否已经启动并且连接上下载进程(可参考任务管理demo中的使用)
-| getStatus(downloadId) | 获取下载Id为downloadId的状态(可参考任务管理demo中的使用)
-| setGlobalPost2UIInterval(intervalMillisecond:int) | 为了避免掉帧，这里是设置了最多每inerval毫秒抛一个消息到ui线程(使用Handler)，防止由于回调的过于频繁导致ui线程被ddos导致掉帧。 默认值: 10ms. 如果设置小于0，将会失效，也就是说每个回调都直接抛一个消息到ui线程
+| getStatusIgnoreCompleted(downloadId) | 获取不包含已完成状态的下载状态(如果任务已经下载完成，将收到`INVALID`)
+| getStatus(id:int, path:String) | 获取下载状态
+| getStatus(url:String, path:String) | 获取下载状态
+| setGlobalPost2UIInterval(intervalMillisecond:int) | 为了避免掉帧，这里是设置了最多每interval毫秒抛一个消息到ui线程(使用Handler)，防止由于回调的过于频繁导致ui线程被ddos导致掉帧。 默认值: 10ms. 如果设置小于0，将会失效，也就是说每个回调都直接抛一个消息到ui线程
 | setGlobalHandleSubPackageSize(packageSize:int) | 为了避免掉帧, 如果上面的方法设置的间隔是一个小于0的数，这个packageSize将不会生效。packageSize这个值是为了避免在ui线程中一次处理过多回调，结合上面的间隔，就是每个interval毫秒间隔抛一个消息到ui线程，而每个消息在ui线程中处理packageSize个回调。默认值: 5
 | enableAvoidDropFrame(void) | 开启 避免掉帧处理。就是将抛消息到ui线程的间隔设为默认值10ms, 很明显会影响的是回调不会立马通知到监听器(FileDownloadListener)中，默认值是: 最多10ms处理5个回调到监听器中
 | disableAvoidDropFrame(void) | 关闭 避免掉帧处理。就是将抛消息到ui线程的间隔设置-1(无效值)，这个就是让每个回调都会抛一个消息ui线程中，可能引起掉帧
-| isEnabledAvoidDropFrame(void) | 是否开启了 避免掉帧处理。默认是开启的。
+| isEnabledAvoidDropFrame(void) | 是否开启了 避免掉帧处理。默认是开启的
+| startForeground(id:int, notification:Notification) | 设置FileDownloadService为前台模式，保证用户从最近应用列表移除应用以后下载服务不会被杀
+| stopForeground(removeNotification:boolean) | 取消FileDownloadService的前台模式
+| setTaskCompleted(url:String, path:String, totalBytes:long) | 用于告诉FileDownloader引擎，以指定Url与Path的任务已经通过其他方式(非FileDownloader)下载完成
+| setTaskCompleted(taskAtomList:List<FileDownloadTaskAtom>) | 用于告诉FileDownloader引擎，指定的一系列的任务都已经通过其他方式(非FileDownloader)下载完成
+| setMaxNetworkThreadCount(int) | 设置最大并行下载的数目(网络下载线程数), [1,12]
 
 
 #### Task接口说明
@@ -239,8 +271,11 @@ if (parallel) {
 | 方法名 | 备注
 | --- | ---
 | setPath(path:String) | 下载文件的存储绝对路径
+| setPath(path:String, pathAsDirectory:boolean) | 如果`pathAsDirectory`是`true`,`path`就是存储下载文件的文件目录(而不是路径)，此时默认情况下文件名`filename`将会默认从`response#header`中的`contentDisposition`中获得
 | setListener(listener:FileDownloadListener) | 设置监听，可以以相同监听组成队列
-| setCallbackProgressTimes(times:int) | 设置FileDownloadListener#progress最大回调次数
+| setCallbackProgressTimes(times:int) | 设置整个下载过程中`FileDownloadListener#progress`最大回调次数
+| setCallbackProgressIgnored() | 忽略所有的`FileDownloadListener#progress`的回调
+| setCallbackProgressMinInterval(minIntervalMillis:int) | 设置每个`FileDownloadListener#progress`之间回调间隔(ms)
 | setTag(tag:Object) | 内部不会使用，在回调的时候用户自己使用
 | setTag(key:int, tag:Object) | 用于存储任意的变量方便回调中使用，以key作为索引
 | setForceReDownload(isForceReDownload:boolean) | 强制重新下载，将会忽略检测文件是否健在
@@ -249,14 +284,19 @@ if (parallel) {
 | setSyncCallback(syncCallback:boolean)  | 如果设为true, 所有FileDownloadListener中的回调都会直接在下载线程中回调而不抛到ui线程, 默认为false
 | addHeader(name:String, value:String) | 添加自定义的请求头参数，需要注意的是内部为了断点续传，在判断断点续传有效时会自动添加上(`If-Match`与`Range`参数)，请勿重复添加导致400或其他错误
 | addHeader(line:String) | 添加自定义的请求头参数，需要注意的是内部为了断点续传，在判断断点续传有效时会自动添加上(`If-Match`与`Range`参数)，请勿重复添加导致400或其他错误
+| setMinIntervalUpdateSpeed(minIntervalUpdateSpeedMs:int) | 设置下载中刷新下载速度的最小间隔
 | removeAllHeaders(name:String) | 删除由自定义添加上去请求参数为`{name}`的所有键对
-| ready(void) | 用于队列下载的单任务的结束符(见上面:启动多任务下载的案例)
-| start(void) | 启动下载任务
+| setWifiRequired(isWifiRequired:boolean) | 设置任务是否只允许在Wifi网络环境下进行下载。 默认值 `false`
+| asInQueueTask(void):InQueueTask | 申明该任务将会是队列任务中的一个任务，并且转化为`InQueueTask`，之后可以调用`InQueueTask#enqueue`将该任务入队以便于接下来启动队列任务时，可以将该任务收编到队列中
+| start(void) | 启动孤立的下载任务
 | pause(void) | 暂停下载任务(也可以理解为停止下载，但是在start的时候默认会断点续传)
-| getDownloadId(void):int | 获取唯一Id(内部通过url与path生成)
+| getId(void):int | 获取唯一Id(内部通过url与path生成)
 | getUrl(void):String | 获取下载连接
 | getCallbackProgressTimes(void):int | 获得progress最大回调次数
-| getPath(void):String | 获取下载文件存储路径
+| getCallbackProgressMinInterval(void):int | 获得每个progress之间的回调间隔(ms)
+| getPath(void):String | 获取文件路径 或 文件目录
+| isPathAsDirectory | 判断`getPath()`返回的路径是文件存储目录(`directory`)，还是文件存储路径(`directory/filename`)
+| getTargetFilePath | 获取目标文件的存储路径
 | getListener(void):FileDownloadListener | 获取监听器
 | getSoFarBytes(void):int | 获取已经下载的字节数
 | getTotalBytes(void):int | 获取下载文件总大小
@@ -271,13 +311,16 @@ if (parallel) {
 | getAutoRetryTimes(void):int | 自动重试次数
 | getRetryingTimes(void):int | 当前重试次数。将要开始重试的时候，会将接下来是第几次
 | isSyncCallback(void):boolean | 是否是设置了所有FileDownloadListener中的回调都直接在下载线程直接回调而不抛到ui线程
+| getSpeed():int | 获取任务的下载速度, 下载过程中为实时速度，下载结束状态为平均速度
+| isUsing():boolean | 判断当前的Task对象是否在引擎中启动过
+| isWifiRequired():boolean | 获取当前任务是否被设置过只允许在Wifi网络环境下下载
 
 #### 监听器(`FileDownloadListener`)说明
 
 ##### 一般的下载回调流程:
 
 ```
-pending -> connected -> (progress <->progress) -> [retry] -> blockComplete -> completed
+pending -> started -> connected -> (progress <->progress) -> blockComplete -> completed
 ```
 
 ##### 可能会遇到以下回调而直接终止整个下载过程:
@@ -297,6 +340,7 @@ blockComplete -> completed
 | 回调方法 | 备注 | 带回数据
 | --- | --- | ---
 | pending | 等待，已经进入下载队列 | 数据库中的soFarBytes与totalBytes
+| started | 结束了pending，并且开始当前任务的Runnable | -
 | connected | 已经连接上 | ETag, 是否断点续传, soFarBytes, totalBytes
 | progress | 下载进度回调 | soFarBytes
 | blockComplete | 在完成前同步调用该方法，此时已经下载完成 | -
@@ -335,14 +379,17 @@ blockComplete -> completed
 | --- | ---
 | onRequestStart(count:int, serial:boolean, lis:FileDownloadListener) | 将会在启动队列任务是回调这个方法
 | onRequestStart(task:BaseDownloadTask) | 将会在启动单一任务时回调这个方法
-| onTaskBegin(task:BaseDownloadTask) | 将会在内部开始该任务的时候回调这个方法(会在`pending`回调之前)
-| onTaskOver(task:BaseDownloadTask) | 将会在该任务走完所有生命周期是回调这个方法
+| onTaskBegin(task:BaseDownloadTask) | 将会在内部接收并开始task的时候回调这个方法(会在`pending`回调之前)
+| onTaskStarted(task:BaseDownloadTask) | 将会在task结束pending开始task的runnable的时候回调该方法
+| onTaskOver(task:BaseDownloadTask) | 将会在task走完所有生命周期是回调这个方法
 
 #### `FileDownloadUtils`
 
 | 方法名 | 备注
 | --- | ---
 | setDefaultSaveRootPath(path:String) | 在整个引擎中没有设置路径时`BaseDownloadTask#setPath`这个路径将会作为它的Root path
+| getTempPath | 获取用于存储还未下载完成文件的临时存储路径: `filename.temp`
+| isFilenameConverted(context:Context) | 判断是否所有数据库中下载中的任务的文件名都已经从`filename`(在旧架构中)转为`filename.temp`
 
 #### `FileDownloadNotificationHelper`
 
@@ -350,13 +397,29 @@ blockComplete -> completed
 
 #### `filedownloader.properties`
 
-> 如果你需要使用'filedownloader.properties'却在项目根目录下没有找到该文件，可以直接在项目根目录下直接创建一个以'filedownloader.properties'作为文件名的文件即可。
+> 如果你需要定制化FileDownloader，可以在你的项目模块的`assets` 目录下添加 'filedownloader.properties' 文件(如 `/demo/src/main/assets/filedownloader.properties`)，然后添加以下可选相关配置。
 
 > 格式: `keyword=value`
 
 | 关键字 | 描述 | 默认值
 | --- | --- | ---
 | http.lenient | 如果你遇到了: 'can't know the size of the download file, and its Transfer-Encoding is not Chunked either', 但是你想要忽略类似的返回头不规范的错误，直接将该关键字参数设置为`true`即可，我们将会将其作为`chunck`进行处理 | false
+| process.non-separate | FileDownloadService 默认是运行在独立进程':filedownloader'上的, 如果你想要FileDownloadService共享并运行在主进程上, 将该关键字参数设置为`true`，可以有效减少IPC产生的I/O | false
+| download.min-progress-step | 最小缓冲大小，用于判定是否是时候将缓冲区中进度同步到数据库，以及是否是时候要确保下缓存区的数据都已经写文件。值越小，更新会越频繁，下载速度会越慢，但是应对进程被无法预料的情况杀死时会更加安全 | 65536
+| download.min-progress-time | 最小缓冲时间，用于判定是否是时候将缓冲区中进度同步到数据库，以及是否是时候要确保下缓存区的数据都已经写文件。值越小，更新会越频繁，下载速度会越慢，但是应对进程被无法预料的情况杀死时会更加安全 | 2000
+| download.max-network-thread-count | 用于同时下载的最大网络线程数, 区间[1, 12] | 3
+
+
+III. 异常处理
+
+> 所有的异常，都将在 `FileDownloadListener#error(BaseDownloadTask, Throwable)` 中获知。
+
+| Exception | 原因
+| --- | ---
+| `FileDownloadHttpException`| 在发出请求以后，response-code不是200(HTTP_OK)，也不是206(HTTP_PARTIAL)的情况下会抛出该异常; 在这个异常对象会带上 response-code、response-header、request-header。
+| `FileDownloadGiveUpRetryException` | 在请求返回的 response-header 中没有带有文件大小(content-length)，并且不是流媒体(transfer-encoding)的情况下会抛出该异常；出现这个异常，将会忽略所有重试的机会(`BaseDownloadTask#setAutoRetryTimes`). 你可以通过在 `filedownloader.properties`中添加 `http.lenient=true` 来忽略这个异常，并且在该情况下，直接作为流媒体进行下载。
+| `FileDownloadOutOfSpaceException` | 当将要下载的文件大小大于剩余磁盘大小时，会抛出这个异常。
+| 其他 | 程序错误。
 
 
 
@@ -404,6 +467,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
+[gitter_url]: https://gitter.im/lingochamp/FileDownloader?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge
+[gitter_svg]: https://badges.gitter.im/lingochamp/FileDownloader.svg
 [license_2_svg]: https://img.shields.io/hexpm/l/plug.svg
 [android_platform_svg]: https://img.shields.io/badge/Platform-Android-brightgreen.svg
 [file_downloader_svg]: https://img.shields.io/badge/Android-FileDownloader-orange.svg

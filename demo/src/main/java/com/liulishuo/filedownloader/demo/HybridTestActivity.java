@@ -14,11 +14,14 @@ import android.widget.TextView;
 
 import com.liulishuo.filedownloader.BaseDownloadTask;
 import com.liulishuo.filedownloader.FileDownloadListener;
+import com.liulishuo.filedownloader.FileDownloadQueueSet;
 import com.liulishuo.filedownloader.FileDownloader;
-import com.liulishuo.filedownloader.event.IDownloadEvent;
+import com.liulishuo.filedownloader.message.FileDownloadMessage;
 import com.liulishuo.filedownloader.util.FileDownloadUtils;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Created by Jacksgong on 12/19/15.
@@ -95,17 +98,18 @@ public class HybridTestActivity extends AppCompatActivity {
     private int finalCounts = 0;
 
     // =================================================== demo area ========================================================
+
     /**
      * Start single download task
-     *
+     * <p>
      * 启动单任务下载
      *
      * @param view
      */
     public void onClickStartSingleDownload(final View view) {
-        updateDisplay(getString(R.string.hybrid_test_start_single_task, Constant.BIG_FILE_URLS[0]));
+        updateDisplay(getString(R.string.hybrid_test_start_single_task, Constant.BIG_FILE_URLS[2]));
         totalCounts++;
-        FileDownloader.getImpl().create(Constant.BIG_FILE_URLS[0])
+        FileDownloader.getImpl().create(Constant.BIG_FILE_URLS[2])
                 .setListener(createListener())
                 .setTag(1)
                 .start();
@@ -113,7 +117,7 @@ public class HybridTestActivity extends AppCompatActivity {
 
     /**
      * Start multiple download tasks parallel
-     *
+     * <p>
      * 启动并行多任务下载
      *
      * @param view
@@ -123,22 +127,23 @@ public class HybridTestActivity extends AppCompatActivity {
 
         // 以相同的listener作为target，将不同的下载任务绑定起来
         final FileDownloadListener parallelTarget = createListener();
+        final List<BaseDownloadTask> taskList = new ArrayList<>();
         int i = 0;
         for (String url : Constant.URLS) {
-            totalCounts++;
-            FileDownloader.getImpl().create(url)
-                    .setListener(parallelTarget)
-                    .setCallbackProgressTimes(1)
-                    .setTag(++i)
-                    .ready();
+            taskList.add(FileDownloader.getImpl().create(url)
+                    .setTag(++i));
         }
+        totalCounts += taskList.size();
 
-        FileDownloader.getImpl().start(parallelTarget, false);
+        new FileDownloadQueueSet(parallelTarget)
+                .setCallbackProgressTimes(1)
+                .downloadTogether(taskList)
+                .start();
     }
 
     /**
      * Start multiple download tasks serial
-     *
+     * <p>
      * 启动串行多任务下载
      *
      * @param view
@@ -147,45 +152,46 @@ public class HybridTestActivity extends AppCompatActivity {
         updateDisplay(getString(R.string.hybrid_test_start_multiple_tasks_serial, Constant.URLS.length));
 
         // 以相同的listener作为target，将不同的下载任务绑定起来
+        final List<BaseDownloadTask> taskList = new ArrayList<>();
         final FileDownloadListener serialTarget = createListener();
         int i = 0;
         for (String url : Constant.URLS) {
-            totalCounts++;
-            FileDownloader.getImpl().create(url)
-                    .setListener(serialTarget)
-                    .setCallbackProgressTimes(1)
-                    .setTag(++i)
-                    .ready();
+            taskList.add(FileDownloader.getImpl().create(url)
+                    .setTag(++i));
         }
+        totalCounts += taskList.size();
 
-        FileDownloader.getImpl().start(serialTarget, true);
+        new FileDownloadQueueSet(serialTarget)
+                .setCallbackProgressTimes(1)
+                .downloadSequentially(taskList)
+                .start();
     }
 
     private FileDownloadListener createListener() {
         return new FileDownloadListener() {
 
             @Override
-            public boolean callback(IDownloadEvent event) {
+            public boolean callback(FileDownloadMessage message) {
                 if (isFinishing()) {
                     return false;
                 }
-                return super.callback(event);
+                return super.callback(message);
             }
 
             @Override
             protected void pending(final BaseDownloadTask task, final int soFarBytes, final int totalBytes) {
-                updateDisplay(String.format("[pending] id[%d] %d/%d", task.getDownloadId(), soFarBytes, totalBytes));
+                updateDisplay(String.format("[pending] id[%d] %d/%d", task.getId(), soFarBytes, totalBytes));
             }
 
             @Override
             protected void connected(BaseDownloadTask task, String etag, boolean isContinue, int soFarBytes, int totalBytes) {
                 super.connected(task, etag, isContinue, soFarBytes, totalBytes);
-                updateDisplay(String.format("[connected] id[%d] %s %B %d/%d", task.getDownloadId(), etag, isContinue, soFarBytes, totalBytes));
+                updateDisplay(String.format("[connected] id[%d] %s %B %d/%d", task.getId(), etag, isContinue, soFarBytes, totalBytes));
             }
 
             @Override
             protected void progress(final BaseDownloadTask task, final int soFarBytes, final int totalBytes) {
-                updateDisplay(String.format("[progress] id[%d] %d/%d", task.getDownloadId(), soFarBytes, totalBytes));
+                updateDisplay(String.format("[progress] id[%d] %d/%d", task.getId(), soFarBytes, totalBytes));
             }
 
             @Override
@@ -193,7 +199,7 @@ public class HybridTestActivity extends AppCompatActivity {
                 downloadMsgTv.post(new Runnable() {
                     @Override
                     public void run() {
-                        updateDisplay(String.format("[blockComplete] id[%d]", task.getDownloadId()));
+                        updateDisplay(String.format("[blockComplete] id[%d]", task.getId()));
                     }
                 });
             }
@@ -202,14 +208,14 @@ public class HybridTestActivity extends AppCompatActivity {
             protected void retry(BaseDownloadTask task, Throwable ex, int retryingTimes, int soFarBytes) {
                 super.retry(task, ex, retryingTimes, soFarBytes);
                 updateDisplay(String.format("[retry] id[%d] %s %d %d",
-                        task.getDownloadId(), ex.getMessage(), retryingTimes, soFarBytes));
+                        task.getId(), ex, retryingTimes, soFarBytes));
             }
 
             @Override
             protected void completed(BaseDownloadTask task) {
                 finalCounts++;
                 updateDisplay(String.format("[completed] id[%d] oldFile[%B]",
-                        task.getDownloadId(),
+                        task.getId(),
                         task.isReusedOldFile()));
                 updateDisplay(String.format("---------------------------------- %d", (Integer) task.getTag()));
             }
@@ -217,7 +223,7 @@ public class HybridTestActivity extends AppCompatActivity {
             @Override
             protected void paused(final BaseDownloadTask task, final int soFarBytes, final int totalBytes) {
                 finalCounts++;
-                updateDisplay(String.format("[paused] id[%d] %d/%d", task.getDownloadId(), soFarBytes, totalBytes));
+                updateDisplay(String.format("[paused] id[%d] %d/%d", task.getId(), soFarBytes, totalBytes));
                 updateDisplay(String.format("############################## %d", (Integer) task.getTag()));
             }
 
@@ -225,8 +231,8 @@ public class HybridTestActivity extends AppCompatActivity {
             protected void error(BaseDownloadTask task, Throwable e) {
                 finalCounts++;
                 updateDisplay(Html.fromHtml(String.format("[error] id[%d] %s %s",
-                        task.getDownloadId(),
-                        e.getMessage(),
+                        task.getId(),
+                        e,
                         FileDownloadUtils.getStack(e.getStackTrace(), false))));
 
                 updateDisplay(String.format("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! %d", (Integer) task.getTag()));
@@ -235,7 +241,7 @@ public class HybridTestActivity extends AppCompatActivity {
             @Override
             protected void warn(BaseDownloadTask task) {
                 finalCounts++;
-                updateDisplay(String.format("[warm] id[%d]", task.getDownloadId()));
+                updateDisplay(String.format("[warn] id[%d]", task.getId()));
                 updateDisplay(String.format("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ %d", (Integer) task.getTag()));
             }
         };

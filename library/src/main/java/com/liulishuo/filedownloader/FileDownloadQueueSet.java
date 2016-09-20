@@ -20,8 +20,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Created by Jacksgong on 1/22/16.
+ * The helper for start and config the task queue simply and quickly.
+ *
+ * @see FileDownloader#start(FileDownloadListener, boolean)
  */
+@SuppressWarnings({"SameParameterValue", "WeakerAccess"})
 public class FileDownloadQueueSet {
 
     private FileDownloadListener target;
@@ -32,16 +35,18 @@ public class FileDownloadQueueSet {
     private Integer autoRetryTimes;
     private Boolean syncCallback;
     private Boolean isForceReDownload;
+    private Boolean isWifiRequired;
     private Integer callbackProgressTimes;
+    private Integer callbackProgressMinIntervalMillis;
     private Object tag;
+    private String directory;
 
     private BaseDownloadTask[] tasks;
 
     /**
-     * @param target for all tasks callback status change
+     * @param target The download listener will be set to all tasks in this queue set.
      */
     public FileDownloadQueueSet(FileDownloadListener target) {
-        // TODO, support target is null
         if (target == null) {
             throw new IllegalArgumentException("create FileDownloadQueueSet must with valid target!");
         }
@@ -49,7 +54,7 @@ public class FileDownloadQueueSet {
     }
 
     /**
-     * Form a queue with same {@link #target} and will {@link #start()} in parallel
+     * Form a queue with same {@link #target} and will {@link #start()} in parallel.
      */
     public FileDownloadQueueSet downloadTogether(BaseDownloadTask... tasks) {
         this.isSerial = false;
@@ -60,7 +65,7 @@ public class FileDownloadQueueSet {
     }
 
     /**
-     * Form a queue with same {@link #target} and will {@link #start()} in parallel
+     * Form a queue with same {@link #target} and will {@link #start()} in parallel.
      */
     public FileDownloadQueueSet downloadTogether(List<BaseDownloadTask> tasks) {
         this.isSerial = false;
@@ -72,7 +77,7 @@ public class FileDownloadQueueSet {
     }
 
     /**
-     * Form a queue with same {@link #target} and will {@link #start()} linearly
+     * Form a queue with same {@link #target} and will {@link #start()} linearly.
      */
     public FileDownloadQueueSet downloadSequentially(BaseDownloadTask... tasks) {
         this.isSerial = true;
@@ -82,7 +87,7 @@ public class FileDownloadQueueSet {
     }
 
     /**
-     * Form a queue with same {@link #target} and will {@link #start()} linearly
+     * Form a queue with same {@link #target} and will {@link #start()} linearly.
      */
     public FileDownloadQueueSet downloadSequentially(List<BaseDownloadTask> tasks) {
         this.isSerial = true;
@@ -93,7 +98,7 @@ public class FileDownloadQueueSet {
     }
 
     /**
-     * Execute tasks
+     * Start tasks in a queue.
      *
      * @see #downloadSequentially(BaseDownloadTask...)
      * @see #downloadSequentially(List)
@@ -120,6 +125,10 @@ public class FileDownloadQueueSet {
                 task.setCallbackProgressTimes(callbackProgressTimes);
             }
 
+            if (callbackProgressMinIntervalMillis != null) {
+                task.setCallbackProgressMinInterval(callbackProgressMinIntervalMillis);
+            }
+
             if (tag != null) {
                 task.setTag(tag);
             }
@@ -130,12 +139,34 @@ public class FileDownloadQueueSet {
                 }
             }
 
-            task.ready();
+            if (this.directory != null) {
+                task.setPath(this.directory, true);
+            }
+
+            if (this.isWifiRequired != null) {
+                task.setWifiRequired(true);
+            }
+
+            task.asInQueueTask().enqueue();
         }
 
         FileDownloader.getImpl().start(target, isSerial);
     }
 
+    /**
+     * @param directory Set the {@code directory} to store files in this queue.
+     *                  All tasks in this queue will be invoked
+     *                  {@link BaseDownloadTask#setPath(String, boolean)} with params:
+     *                  ({@code directory}, {@code true}).
+     */
+    public FileDownloadQueueSet setDirectory(String directory) {
+        this.directory = directory;
+        return this;
+    }
+
+    /**
+     * @see BaseDownloadTask#setAutoRetryTimes(int)
+     */
     public FileDownloadQueueSet setAutoRetryTimes(int autoRetryTimes) {
         this.autoRetryTimes = autoRetryTimes;
         return this;
@@ -166,6 +197,22 @@ public class FileDownloadQueueSet {
     }
 
     /**
+     * @see BaseDownloadTask#setCallbackProgressMinInterval(int)
+     */
+    public FileDownloadQueueSet setCallbackProgressMinInterval(int minIntervalMillis) {
+        this.callbackProgressMinIntervalMillis = minIntervalMillis;
+        return this;
+    }
+
+    /**
+     * @see BaseDownloadTask#setCallbackProgressIgnored()
+     */
+    public FileDownloadQueueSet ignoreEachTaskInternalProgress() {
+        setCallbackProgressTimes(-1);
+        return this;
+    }
+
+    /**
      * @see BaseDownloadTask#setCallbackProgressTimes(int)
      */
     public FileDownloadQueueSet disableCallbackProgressTimes() {
@@ -190,6 +237,14 @@ public class FileDownloadQueueSet {
         }
 
         this.taskFinishListenerList.add(finishListener);
+        return this;
+    }
+
+    /**
+     * @see BaseDownloadTask#setWifiRequired(boolean)
+     */
+    public FileDownloadQueueSet setWifiRequired(boolean isWifiRequired) {
+        this.isWifiRequired = isWifiRequired;
         return this;
     }
 

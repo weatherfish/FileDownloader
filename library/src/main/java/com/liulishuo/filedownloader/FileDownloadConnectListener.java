@@ -19,12 +19,15 @@ package com.liulishuo.filedownloader;
 import com.liulishuo.filedownloader.event.DownloadServiceConnectChangedEvent;
 import com.liulishuo.filedownloader.event.IDownloadEvent;
 import com.liulishuo.filedownloader.event.IDownloadListener;
-import com.liulishuo.filedownloader.services.FileDownloadService;
 
 /**
- * Created by Jacksgong on 1/10/16.
+ * The listener for listening whether the service establishes connection or disconnected.
+ *
+ * @see com.liulishuo.filedownloader.services.BaseFileServiceUIGuard#releaseConnect(boolean)
  */
 public abstract class FileDownloadConnectListener extends IDownloadListener {
+
+    private DownloadServiceConnectChangedEvent.ConnectStatus mConnectStatus;
 
     public FileDownloadConnectListener() {
     }
@@ -34,9 +37,9 @@ public abstract class FileDownloadConnectListener extends IDownloadListener {
         if (event instanceof DownloadServiceConnectChangedEvent) {
             final DownloadServiceConnectChangedEvent connectChangedEvent
                     = (DownloadServiceConnectChangedEvent) event;
-            if (connectChangedEvent.isSuchService(FileDownloadService.class)
-                    && connectChangedEvent.getStatus()
-                    == DownloadServiceConnectChangedEvent.ConnectStatus.connected) {
+            mConnectStatus = connectChangedEvent.getStatus();
+
+            if (mConnectStatus == DownloadServiceConnectChangedEvent.ConnectStatus.connected) {
                 connected();
             } else {
                 disconnected();
@@ -55,4 +58,7 @@ public abstract class FileDownloadConnectListener extends IDownloadListener {
      */
     public abstract void disconnected();
 
+    public DownloadServiceConnectChangedEvent.ConnectStatus getConnectStatus() {
+        return mConnectStatus;
+    }
 }

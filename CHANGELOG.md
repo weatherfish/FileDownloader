@@ -2,6 +2,313 @@
 
 > [中文迭代日志](https://github.com/lingochamp/FileDownloader/blob/master/CHANGELOG-ZH.md)
 
+## Version 1.1.0
+
+_2016-09-13_
+
+#### New Interfaces
+
+- Add `BaseDownloadTask#setWifiRequired`: Set whether the task only allows downloading on the wifi network type. Default `false`. Closes #281 .
+
+#### Enhancement
+
+- Improve Performance: Alternate all thread pools to exceed-wait-pool(more detail: docs in `FileDownloadExecutors`) and all threads in pools will be terminate after idle 5 second. Refs #303 .
+- Improve Practicability: Handle any `Throwable`s thrown on `FileDownloadListener#blockComplete` method and callback to `FileDownloadListener#error` method instead of `FileDownloadListener#completed`. Closes #305 .
+
+#### Fix
+
+- Fix(lost-connect): Prevent the waiting-connect-list contains duplicate tasks in minor cases.
+
+## Version 1.0.2
+
+_2016-09-06_
+
+#### Fix
+
+- Fix: When the service didn't connected and now it is connected and FileDownloader try to restart the 'queue-task's which in the waiting-service-connect list but occur an `IllegalStateException`. Closes #307 .
+
+## Version 1.0.1
+
+_2016-09-05_
+
+#### New Interfaces
+
+> If you used `BaseDownloadTask#ready()` which is a deprecated method now, just migrate it to `BaseDownloadTask#asInQueueTask():InQueueTask` and `InQueueTask#enqueue()`.
+
+- Add `BaseDownloadTask#asInQueueTask():InQueueTask` and Deprecated `BaseDownloadTask#ready()`: Declare the task is a queue task, what will be assembled by a queue which makes up of the same `listener` task and there is a method `InQueueTask#enqueue()` to enqueue this task to the global queue to ready for being assembled by the queue. The operation of method `InQueueTask#enqueue()` is the same to the Deprecated method `BaseDownloadTask#ready()`, we wrap the `ready()` method in this way just want you to know clearly: Only if the task belongs to a queue, you need to invoke this method otherwise if this task is an isolated task but you invoke this method, it's wrong and you will receive an exception(More detail reason please move to the exception thrown in `DownloadTask#start`).
+
+#### Fix
+
+- Fix: Maybe occur an IllegalStateException when there are several isolated tasks and queues with the same `listener` object, and they are started in the different thread simultaneously. Closes #282 .
+
+## Version 1.0.0
+
+_2016-08-21_
+
+#### New Interfaces
+
+- Add `BaseDownloadTask#cancel`: This method is used for explaining why the pause operation is the same as the cancel operation.
+
+#### Enhancement
+
+- Improve Performance: Hold the result of `isDownloaderProcess`.
+- Improve Practicability: Refactor the visible layer of the code. Closes #283
+- Improve Practicability: Perfect the java doc. Closes #284
+- Improve Practicability: Add the java doc website: http://fd.dreamtobe.cn. Closes #285
+
+## Version 0.3.5
+
+_2016-08-16_
+
+#### Enhancement
+
+- Improve Practicability: Add thread name to all threads used in FileDownloader.
+- Improve Performance: Change the count of core thread for block-completed-thread-pool: 5->2, reduce redundant resource waste.
+
+#### Fix
+
+- Fix(SQLiteFullException): Cover the case of SQLiteFullException during the entire downloading process, and ensure the exception can be carried back to `FileDownloadListener#error` . Closes #243
+- Fix(directory-case): Fix in the case of the provided path is a directory, and the task already completed, if you start the task again you will receive `FileDownloadListener#completed` directly, but the `targetFilePath` may be null in the `FileDownloadListener#completed` callback method. Closes #237
+
+## Version 0.3.4
+
+_2016-07-31_
+
+#### New Interfaces
+
+- Add `FileDownloader#clear`: clear the data with the task id in the filedownloader database. Closes #218.
+
+#### Enhancement
+
+- Improve Practicability: Add return value to the method `FileDownloader#start(FileDownloadListener, boolean)` : Whether start tasks successfully. Closes #215.
+- Improve Practicability: Pause tasks with the same download-id rather than just pause one task through there are more than one task in downloading.
+
+#### Fix
+
+- Fix(init-crash): Fix the crash about the list of running-app-process-info from `ActivityManager` is null when to init FileDownloader. Closes #210.
+- Fix(minor-crash): Fix the NPE-crash when to execute receiving snapshot-message after FileDownloadService already onDestroy. Closes #213.
+- Fix(message-keep-flow): Delete the target file before start downloading, ensure can't get the `completed` status when another same task is downloading. Closes #220
+- Fix(start-serial): Assemble non-attached-tasks to start rather than assemble tasks just refer to FileDownloadListener, fix no possibility to start two queues with the same `FileDownloadListener`. Closes #223.
+- Fix(free-messenger): Free the messenger of Task before call back 'over-message' to FileDownloadListener instead of after callback, ensure Task can be reused in FileDownloadListener callback method. Closes #229.
+
+#### Others
+
+- Upgrade dependency okhttp from `3.3.1` to `3.4.1`.
+
+
+## Version 0.3.3
+
+_2016-07-10_
+
+#### New Interfaces
+
+- Add `FileDownloadUtils#getTempPath`: Get the temp path is used for storing the temporary file not completed downloading yet(`filename.temp`). Refs #172.
+- Add `FileDownloader#getStatusIgnoreCompleted(id:int)`:  Get the downloading status without cover the completed status(If completed you will receive `INVALID`).
+- Add `FileDownloader#getStatus(id:int, path:String)`:  Get the downloading status.
+- Add `FileDownloader#getStatus(url:String, path:String)`:  Get the downloading status.
+- Add `FileDownloadUtils#isFilenameConverted(context:Context)`: Whether tasks from FileDownloader Database has converted all files' name from `filename`(in old architecture) to `filename.temp`, if it is not completed downloading yet.
+- Add `FileDownloadUtils#generateId(url:String, path:String, pathAsDirectory:boolean)`: Generate a `Download Id` which can be recognized in FileDownloader.
+- Add `BaseDownloadTask#setPath(path:String, pathAsDirectory:boolean)`: If `pathAsDirectory` is `true`, the `path` would be the absolute directory to store the downloading file, and the `filename` will be found in `contentDisposition` from the `response#header` as default.
+- Add `BaseDownloadTask#isPathAsDirectory`: Whether the result of `BaseDownloadTask#getPath()` is a `directory` path or `directory/filename` path.
+- Add `BaseDownloadTask#getTargetFilePath`: Get the target file path to store the downloading file.
+- Add `FileDownloadQueueSet#setDirectory`: Set the `directory` to store files in this queue.
+
+#### Enhancement
+
+- Improve Practicability: Support the `path` of the task as the directory to store the file, and in this case, the `filename` will be found in `contentDisposition` from the `response#header` as default. Refs #200.
+- Improve Practicability: Using the temp path to store the file not completed downloading yet(`filename.temp`). Refs #172.
+- Improve Performance: FileDownloader doesn't store completed tasks in Database anymore, and check whether the task has completed downloading with `File#exists()` directly. Refs #176, #172.
+- Improve Robust: Choosing the task which status is `INVALID` or `progress` to receive `completed` message preferentially, to ensure the callback of `progress` can be handled. Refs #123
+- Improve Robust: Expanding task-sync-lock to the outside of getting-same-id-downloading-task, to fix some messages can't be consumed because status changed during getting-same-id-downloading-task and waiting for task-sync-lock.
+
+#### Fix
+
+- Fix(DB-maintain): Keeping models, whose status is `pending` and downloaded so far bytes is more than 0 because it can be used for resuming from the breakpoint. Closes #176.
+- Fix(crash-NPE): FileDownloader might occur NPE when the download-listener was removed, but the task is still running in FileDownloader. Closes #171.
+
+## Version 0.3.2
+
+_2016-06-12_
+
+#### New Interfaces
+
+- Add `BaseDownloadTask#setCallbackProgressMinInterval`: Set the minimum time interval between each callback of 'progress'. Closes #167.
+- Add `FileDownloader#setMaxNetworkThreadCount`: Change the number of simultaneous downloads(the number of the simultaneously running network threads) at the code side. Closes #168.
+- Add `FileDownloader#init(Context,OkHttpClientCustomMaker,int)`: Accept initializing the number of simultaneous downloads(the number of the simultaneously running network threads) with the FileDownloadService initializes. Closes #168.
+
+#### Enhancement
+
+- Improve Robust: Ensure the minimum time interval between each callback of 'progress' is 5ms, To prevent internal callback of 'progress' too frequent happening. Closes #167.
+- Improve Practicability: Print the 'warn' priority log when a request does something in the FileDownloadService but it isn't connected yet.
+- Improve Performance: Using the `SparseArray` instead of `HashMap` for mapping all `FileDownloadModel`.
+
+#### Fix
+
+- Fix(crash): Fix provided wrong params in formatting character string when to starting download runnable occur the unexpected downloading status.
+- Fix(force-re-download): Fix the wrong logic: In the case of `BaseDownloadTask#setForceReDownload(true)` and the task has already downloaded will trigger 'warn' callback. Closes #169 .
+- Fix(class-type): Keep the class type of `SocketTimeOutException`, and no longer care about whether the message of Throwable is empty, this is very redundant.
+
+#### Others
+
+- Upgrade dependency okhttp from `3.2.0` to `3.3.1`.
+
+## Version 0.3.1
+
+_2016-05-19_
+
+#### Enhancement
+
+- Improve Robust: Ensuring buffer is written out to the device when at the end of fetching data.
+
+## Version 0.3.0
+
+_2016-05-13_
+
+#### Fix
+
+> Why FileDownload can run in UI process? Ref [filedownloader.properties](https://github.com/lingochamp/FileDownloader/wiki/filedownloader.properties).
+
+- Fix(shared-UI-process): fix the addition header does not attach to Http-request when the FileDownload service isn't running in the separate process to UI process. Closes #149.
+
+
+## Version 0.2.9
+
+_2016-05-10_
+
+#### New Interfaces
+
+- Add `BaseDownloadTask#isUsing():boolean`: Whether this task object has already started and used in FileDownload Engine. Closes #137 .
+
+#### Fix
+
+- Fix(high-concurrency-npe): Providing the default snapshot when a task's status is unexpected, preventing the npe is occurred in this case.
+- Fix(response-416): Covering the response status code is 416 or still resume from breakpoint when its so far bytes more than or equal to total bytes.
+
+## Version 0.2.8
+
+_2016-05-02_
+
+#### New Interfaces
+
+- Add `BaseDownloadTask#getId():int`: deprecate `getDownloadId()`, and using the `getId()` instead, for `BaseDownloadTask`.
+
+#### Enhancement
+
+- Improve Robust: Refactor the launcher for launching tasks more make sense, and expire tasks with listener or expire all waiting-tasks more stable.
+- Improve Robust: Refactor the architecture which is used to handle the event send to `FileDownloadListener`, the new architecture just like a messenger and message-station, each tasks would write snapshot messages to message-station.
+- Improve Robust: Cover all high concurrent situations about pausing a task, remove some expected warn logs about it.
+- Improve Performance: Reduce the FileDownloader database I/O.
+- Improve Performance: Reduce creating object(less allocating memory request, friendly to GC) for each call-back, Taking a message snapshot for a status updating, and through whole communication architecture just use it.
+
+#### Fix
+
+- Fix: Provide the definite locale for formatting strings, prevent unexpected-locale as Default happening. Closes #127
+
+## Version 0.2.7
+
+_2016-04-22_
+
+#### New Interfaces
+
+- Add `FileDownloader#setTaskCompleted(taskAtomList:List<FileDownloadTaskAtom>)`: Used to telling the FileDownloader Engine that a bulk of tasks have already downloaded by other ways.
+
+#### Enhancement
+
+- Improve Robust: Throw the Fatal-Exception directly when request to bind the FileDownloadService in the `:filedownloader` process. Closes #119 .
+
+## Version 0.2.6
+
+_2016-04-20_
+
+#### New Interfaces
+
+- Adjust: Change the location of the `filedownloader.properties` ，no more in the root directory of project, instead below the `assets` of a module, for example `/demo/src/main/assets/filedownloader.properties`.
+
+#### Fix
+
+- Fix: `filedownloader.properties` not work. Closes #117.
+
+## Version 0.2.5
+
+_2016-04-19_
+
+#### New Interfaces
+
+- Add `FileDownloader#setTaskCompleted`: Used to telling the FileDownloader Engine that the task with the url and the path has already completed downloading by other ways(not by FileDownloader Engine).
+- Support the configuration `download.max-network-thread-count` in `filedownloader.properties`: The maximum network thread count for downloading simultaneously, default is 3. Closes #116.
+
+## Version 0.2.4
+
+_2016-04-18_
+
+#### New Interfaces
+
+- Add `BaseDownloadTask#getSpeed` and `BaseDownloadTask#setMinIntervalUpdateSpeed`: Get the download speed for a task. If it is in processing, the speed would be real-time speed; If finished, the speed would be average speed. Closes #95
+- Add the `FileDownloader#startForeground` and `FileDownloader#stopForeground` for supporting the Foreground mode([Service#startForeground](https://github.com/lingochamp/FileDownloader/wiki/filedownloader.properties)); For ensure the FileDownloadService would keep alive when user removed the App from the recent apps. Closes #110 .
+- Support configurations `download.min-progress-step` and `download.min-progress-time`: The min buffered so far bytes and millisecond, used for adjudging whether is time to sync the download so far bytes to database and make sure sync the downloaded buffers to the local file. More small more frequent, then download more slowly, but will safer in the scene of the process is killed unexpectedly. Default 65536(MinProgressStep) and 2000(MinProgressTime), which follow the value in `com.android.providers.downloads.Constants`.
+- Support the configuration `process.non-separate` in `filedownloader.properties`: The FileDownloadService runs in the separate process ':filedownloader' as default, if you want to run the FileDownloadService in the main process, set this configuration as `true`. Closes #106 .
+
+#### Enhancement
+
+- Improve Performance: Download more quickly, Optimize the strategy about sync the buffered datum to database and local file when processing. Closes #112 .
+
+#### Fix
+
+- Fix: Can't restart the task which in paused but is still settling in the download-pool. Closes #111
+
+## Version 0.2.3
+
+_2016-04-11_
+
+#### New Interfaces
+
+- Add `FileDownloadOutOfSpaceException`, Throw this exception, when the file will be downloaded is too large to store.
+- Add new call-back method in `FileDownloadListener`: `started` which will be invoked when finish pending, and start the download runnable.
+- Add new call-back method in `FileDownloadMonitor.IMonitor`: `onTaskStarted` which will be invoked when finish pending, and start the download runnable.
+
+#### Enhancement
+
+- Improve Practicability: Provide the current task to the method `over` in `FinishListener`, for recognizing target task in case of one-FinishListener for more than one task. Closes #69 .
+- Improve Robust: Throw the exception directly when invoke `BaseDownloadTask#start` for a running-task object, add provide 'reuse' method to reuse a used and already finished task object. Closes #91 .
+- Improve Performance: Intercept the enqueue operate for the otiose event which is no listener for handling it.
+
+#### Fix
+
+- Fix: In handful cases the task-call-back flow not follow the expect.
+- Fix: `progress` call-back included the ending frame ( `sofarBytes == totalBytes` ).
+- Fix: Carry back the total bytes in the status of warn, for covering the case of UI-process had killed but has restarted App with restarting the task and download-process is alive still, the total bytes is 0 in UI-process. Closes #90 .
+- Fix: Can't call-back 'retry' in expect, the case of the call-back method 'retry' one-by-one. Refs: #91 .
+- Fix: The wrong sofar bytes will cover the right one, when occur error in no-network and has chance to retry. Closes #92 .
+- Fix: Handle the case of the downloading is finished during the 'check-reuse' to 'check-downloading' in filedownloader-process.
+- Fix: The serial-queue converts to The parallel-queue in restoring from filedownloader-process has killed and restarting.
+
+## Version 0.2.2
+
+_2016-04-06_
+
+#### New Interfaces
+
+- Add `FileDownloadHttpException` and `FileDownloadGiveUpRetryException`, and optimize the mechanism of exception. Closes #67 .
+- Init the `FileDownloader` use `Context` instead of `Application` ( `FileDownloader#init(Context)` ) , for more make sense and unit-test. Closes #54 .
+
+#### Enhancement
+
+- Improve Robust: Check whether free space is enough, and throw IOException directly when not enough; And pre-allocate need-available-space before fetching datum when the free space more than need-available-space. Closes #46 .
+- Improve Practicability: Support resume from breakpoint without ETag. Just need the server support the request-header param 'Range'. Close #35 , #66 .
+
+
+#### Fix
+
+- Fix: The `IllegalFormatConversionException` on `EventPool` when publishing the event which does not in effect and `FileDownloadLog.NEED_LOG` is `true`. Closes #30 .
+- Fix: The non-fatal-crash in `IFileDownloadIPCService.java` , when lost connection from filedownloader process. because the IBinder's hosting process(filedownloader process) has been killed/cancelled. Closes #38 .
+- Fix: The leak of response-body: 'WARNING: A connection to https://... was leaked. Did you forget to close a response body?' Closes #68 .
+- Fix: Using the internal-string as synchronized lock-object instead of string-original.
+- Fix: The number of the Ing-call-back is not correct in some cases.
+
+#### Others
+
+- Upgrade dependency okhttp from `3.1.2` to `3.2.0`.
+
 ## Version 0.2.0
 
 _2016-02-15_

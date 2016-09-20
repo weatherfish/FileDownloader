@@ -20,20 +20,21 @@ import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.text.TextUtils;
+import android.util.SparseArray;
 
 import com.liulishuo.filedownloader.model.FileDownloadModel;
 import com.liulishuo.filedownloader.model.FileDownloadStatus;
 import com.liulishuo.filedownloader.util.FileDownloadHelper;
 import com.liulishuo.filedownloader.util.FileDownloadLog;
+import com.liulishuo.filedownloader.util.FileDownloadUtils;
 
+import java.io.File;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
- * Created by Jacksgong on 9/24/15.
+ * For storing and updating the {@link FileDownloadModel} to the filedownloader database, and also
+ * maintain the database when FileDownloader-Process is launching automatically.
  */
 class FileDownloadDBHelper implements IFileDownloadDBHelper {
 
@@ -41,7 +42,7 @@ class FileDownloadDBHelper implements IFileDownloadDBHelper {
 
     public final static String TABLE_NAME = "filedownloader";
 
-    private final Map<Integer, FileDownloadModel> downloaderModelMap = new HashMap<>();
+    private final SparseArray<FileDownloadModel> downloaderModelMap = new SparseArray<>();
 
     public FileDownloadDBHelper() {
         FileDownloadDBOpenHelper openHelper = new FileDownloadDBOpenHelper(FileDownloadHelper.getAppContext());
@@ -51,62 +52,84 @@ class FileDownloadDBHelper implements IFileDownloadDBHelper {
         refreshDataFromDB();
     }
 
-
-    @Override
-    public Set<FileDownloadModel> getAllUnComplete() {
-        return null;
-    }
-
-    @Override
-    public Set<FileDownloadModel> getAllCompleted() {
-        return null;
-    }
-
-    @Override
-    public void refreshDataFromDB() {
-        // TODO 优化，分段加载，数据多了以后
-        // TODO 自动清理一个月前的数据
+    private void refreshDataFromDB() {
         long start = System.currentTimeMillis();
         Cursor c = db.rawQuery("SELECT * FROM " + TABLE_NAME, null);
 
         List<Integer> dirtyList = new ArrayList<>();
+        //noinspection TryFinallyCanBeTryWithResources
         try {
             while (c.moveToNext()) {
                 FileDownloadModel model = new FileDownloadModel();
                 model.setId(c.getInt(c.getColumnIndex(FileDownloadModel.ID)));
                 model.setUrl(c.getString(c.getColumnIndex(FileDownloadModel.URL)));
-                model.setPath(c.getString(c.getColumnIndex(FileDownloadModel.PATH)));
-//                model.setCallbackProgressTimes(c.getInt(c.getColumnIndex(FileDownloadModel.CALLBACK_PROGRESS_TIMES)));
+                model.setPath(c.getString(c.getColumnIndex(FileDownloadModel.PATH)),
+                        c.getShort(c.getColumnIndex(FileDownloadModel.PATH_AS_DIRECTORY)) == 1);
                 model.setStatus((byte) c.getShort(c.getColumnIndex(FileDownloadModel.STATUS)));
-                model.setSoFar(c.getInt(c.getColumnIndex(FileDownloadModel.SOFAR)));
-                model.setTotal(c.getInt(c.getColumnIndex(FileDownloadModel.TOTAL)));
+                model.setSoFar(c.getLong(c.getColumnIndex(FileDownloadModel.SOFAR)));
+                model.setTotal(c.getLong(c.getColumnIndex(FileDownloadModel.TOTAL)));
                 model.setErrMsg(c.getString(c.getColumnIndex(FileDownloadModel.ERR_MSG)));
                 model.setETag(c.getString(c.getColumnIndex(FileDownloadModel.ETAG)));
+                model.setFilename(c.getString(c.getColumnIndex(FileDownloadModel.FILENAME)));
                 if (model.getStatus() == FileDownloadStatus.progress ||
                         model.getStatus() == FileDownloadStatus.connected ||
-                        model.getStatus() == FileDownloadStatus.error) {
-                    // 保证断点续传可以覆盖到
+                        model.getStatus() == FileDownloadStatus.error ||
+                        (model.getStatus() == FileDownloadStatus.pending && model.getSoFar() > 0)
+                        ) {
+                    // Ensure can be covered by RESUME FROM BREAKPOINT.
                     model.setStatus(FileDownloadStatus.paused);
                 }
 
-                // consider check in new thread, but SQLite lock | file lock aways effect, so sync
-                if (model.getStatus() == FileDownloadStatus.pending) {
-                    //脏数据 在数据库中是pending或是progress，说明是之前
+                final String targetFilePath = model.getTargetFilePath();
+                if (targetFilePath == null) {
+                    // no target file path, can't used to resume from breakpoint.
                     dirtyList.add(model.getId());
-                } else if (!FileDownloadMgr.checkReuse(model.getId(), model)
-                        && !FileDownloadMgr.checkBreakpointAvailable(model.getId(), model)) {
-                    // can't use to reuse old file & can't use to resume form break point
-                    // = dirty
-                    dirtyList.add(model.getId());
+                    continue;
                 }
-                downloaderModelMap.put(model.getId(), model);
+
+                final File targetFile = new File(targetFilePath);
+
+                // consider check in new thread, but SQLite lock | file lock aways effect, so sync
+                if (model.getStatus() == FileDownloadStatus.paused &&
+                        FileDownloadMgr.isBreakpointAvailable(model.getId(), model,
+                                model.getPath())) {
+                    // can be reused in the old mechanism(no-temp-file).
+
+                    final File tempFile = new File(model.getTempFilePath());
+
+                    if (!tempFile.exists() && targetFile.exists()) {
+                        final boolean successRename = targetFile.renameTo(tempFile);
+                        if (FileDownloadLog.NEED_LOG) {
+                            FileDownloadLog.d(this,
+                                    "resume from the old no-temp-file architecture [%B], [%s]->[%s]",
+                                    successRename, targetFile.getPath(), tempFile.getPath());
+
+                        }
+                    }
+                }
+
+                /**
+                 * Remove {@code model} from DB if it can't used for judging whether the
+                 * old-downloaded file is valid for reused & it can't used for resuming from
+                 * BREAKPOINT, In other words, {@code model} is no use anymore for FileDownloader.
+                 */
+                if (model.getStatus() == FileDownloadStatus.pending && model.getSoFar() <= 0) {
+                    // This model is redundant.
+                    dirtyList.add(model.getId());
+                } else if (!FileDownloadMgr.isBreakpointAvailable(model.getId(), model)) {
+                    // It can't used to resuming from breakpoint.
+                    dirtyList.add(model.getId());
+                } else if (targetFile.exists()) {
+                    // It has already completed downloading.
+                    dirtyList.add(model.getId());
+                } else {
+                    downloaderModelMap.put(model.getId(), model);
+                }
+
             }
         } finally {
             c.close();
-
-            for (Integer integer : dirtyList) {
-                downloaderModelMap.remove(integer);
-            }
+            FileDownloadUtils.markConverted(FileDownloadHelper.getAppContext());
 
             // db
             if (dirtyList.size() > 0) {
@@ -114,7 +137,8 @@ class FileDownloadDBHelper implements IFileDownloadDBHelper {
                 if (FileDownloadLog.NEED_LOG) {
                     FileDownloadLog.d(this, "delete %s", args);
                 }
-                db.execSQL(String.format("DELETE FROM %s WHERE %s IN (%s);",
+                //noinspection ThrowFromFinallyBlock
+                db.execSQL(FileDownloadUtils.formatString("DELETE FROM %s WHERE %s IN (%s);",
                         TABLE_NAME, FileDownloadModel.ID, args));
             }
 
@@ -161,127 +185,157 @@ class FileDownloadDBHelper implements IFileDownloadDBHelper {
     }
 
     @Override
-    public void remove(int id) {
+    public void update(List<FileDownloadModel> downloadModelList) {
+        if (downloadModelList == null) {
+            FileDownloadLog.w(this, "update a download list, but list == null!");
+            return;
+        }
+
+        db.beginTransaction();
+
+        try {
+            for (FileDownloadModel model : downloadModelList) {
+                if (find(model.getId()) != null) {
+                    // replace
+                    downloaderModelMap.remove(model.getId());
+                    downloaderModelMap.put(model.getId(), model);
+
+                    db.update(TABLE_NAME, model.toContentValues(), FileDownloadModel.ID + " = ? ",
+                            new String[]{String.valueOf(model.getId())});
+                } else {
+                    // insert new one.
+                    downloaderModelMap.put(model.getId(), model);
+
+                    db.insert(TABLE_NAME, null, model.toContentValues());
+                }
+            }
+
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    @Override
+    public boolean remove(int id) {
         downloaderModelMap.remove(id);
 
         // db
-        db.delete(TABLE_NAME, FileDownloadModel.ID + " = ?", new String[]{String.valueOf(id)});
+        return db.delete(TABLE_NAME, FileDownloadModel.ID + " = ?", new String[]{String.valueOf(id)})
+                != 0;
     }
 
-    private long lastRefreshUpdate = 0;
-
     @Override
-    public void update(int id, byte status, long soFar, long total) {
-        final FileDownloadModel downloadModel = find(id);
-        if (downloadModel != null) {
-            downloadModel.setStatus(status);
-            downloadModel.setSoFar(soFar);
-            downloadModel.setTotal(total);
+    public void updateConnected(FileDownloadModel model, long total, String etag, String filename) {
+        model.setStatus(FileDownloadStatus.connected);
 
-            boolean needRefresh2DB = false;
-            final int MIN_REFRESH_DURATION_2_DB = 10;
-            if (System.currentTimeMillis() - lastRefreshUpdate > MIN_REFRESH_DURATION_2_DB) {
-                needRefresh2DB = true;
-                lastRefreshUpdate = System.currentTimeMillis();
-            }
 
-            if (!needRefresh2DB) {
-                return;
-            }
+        // db
+        ContentValues cv = new ContentValues();
+        cv.put(FileDownloadModel.STATUS, FileDownloadStatus.connected);
 
-            // db
-            ContentValues cv = new ContentValues();
-            cv.put(FileDownloadModel.STATUS, status);
-            cv.put(FileDownloadModel.SOFAR, soFar);
+        final long oldTotal = model.getTotal();
+        if (oldTotal != total) {
+            model.setTotal(total);
             cv.put(FileDownloadModel.TOTAL, total);
-            db.update(TABLE_NAME, cv, FileDownloadModel.ID + " = ? ", new String[]{String.valueOf(id)});
         }
 
-    }
-
-    @Override
-    public void updateHeader(int id, String etag) {
-        final FileDownloadModel downloadModel = find(id);
-        if (downloadModel != null) {
-            downloadModel.setETag(etag);
-
-            //db
-            ContentValues cv = new ContentValues();
+        final String oldEtag = model.getETag();
+        if ((etag != null && !etag.equals(oldEtag)) ||
+                (oldEtag != null && !oldEtag.equals(etag))) {
+            model.setETag(etag);
             cv.put(FileDownloadModel.ETAG, etag);
-            db.update(TABLE_NAME, cv, FileDownloadModel.ID + " = ? ", new String[]{String.valueOf(id)});
         }
+
+        if (model.isPathAsDirectory() &&
+                model.getFilename() == null && filename != null) {
+            model.setFilename(filename);
+
+            cv.put(FileDownloadModel.FILENAME, filename);
+        }
+
+        update(model.getId(), cv);
     }
 
     @Override
-    public void updateError(int id, String errMsg) {
-        final FileDownloadModel downloadModel = find(id);
-        if (downloadModel != null) {
-            downloadModel.setStatus(FileDownloadStatus.error);
-            downloadModel.setErrMsg(errMsg);
+    public void updateProgress(FileDownloadModel model, long soFar) {
+        model.setStatus(FileDownloadStatus.progress);
+        model.setSoFar(soFar);
 
-            // db
-            ContentValues cv = new ContentValues();
-            cv.put(FileDownloadModel.ERR_MSG, errMsg);
-            cv.put(FileDownloadModel.STATUS, FileDownloadStatus.error);
-            db.update(TABLE_NAME, cv, FileDownloadModel.ID + " = ? ", new String[]{String.valueOf(id)});
-        }
+        // db
+        ContentValues cv = new ContentValues();
+        cv.put(FileDownloadModel.STATUS, FileDownloadStatus.progress);
+        cv.put(FileDownloadModel.SOFAR, soFar);
+        update(model.getId(), cv);
     }
 
     @Override
-    public void updateRetry(int id, String errMsg, int retryingTimes) {
-        final FileDownloadModel downloadModel = find(id);
-        if (downloadModel != null) {
-            downloadModel.setStatus(FileDownloadStatus.retry);
-            downloadModel.setErrMsg(errMsg);
+    public void updateError(FileDownloadModel model, Throwable throwable, long sofar) {
+        final String errMsg = throwable.toString();
 
-            // db
-            ContentValues cv = new ContentValues();
-            cv.put(FileDownloadModel.ERR_MSG, errMsg);
-            cv.put(FileDownloadModel.STATUS, FileDownloadStatus.retry);
-            db.update(TABLE_NAME, cv, FileDownloadModel.ID + " = ? ", new String[]{String.valueOf(id)});
-        }
+        model.setStatus(FileDownloadStatus.error);
+        model.setErrMsg(errMsg);
+        model.setSoFar(sofar);
+
+        // db
+        ContentValues cv = new ContentValues();
+        cv.put(FileDownloadModel.ERR_MSG, errMsg);
+        cv.put(FileDownloadModel.STATUS, FileDownloadStatus.error);
+        cv.put(FileDownloadModel.SOFAR, sofar);
+        update(model.getId(), cv);
     }
 
     @Override
-    public void updateComplete(int id, final long total) {
-        final FileDownloadModel downloadModel = find(id);
-        if (downloadModel != null) {
-            downloadModel.setStatus(FileDownloadStatus.completed);
-            downloadModel.setSoFar(total);
-            downloadModel.setTotal(total);
-        }
+    public void updateRetry(FileDownloadModel model, Throwable throwable) {
+        final String errMsg = throwable.toString();
+
+        model.setStatus(FileDownloadStatus.retry);
+        model.setErrMsg(errMsg);
+
+        // db
+        ContentValues cv = new ContentValues();
+        cv.put(FileDownloadModel.ERR_MSG, errMsg);
+        cv.put(FileDownloadModel.STATUS, FileDownloadStatus.retry);
+        update(model.getId(), cv);
+    }
+
+    @Override
+    public void updateComplete(FileDownloadModel model, final long total) {
+        model.setStatus(FileDownloadStatus.completed);
+        model.setSoFar(total);
+        model.setTotal(total);
 
         //db
         ContentValues cv = new ContentValues();
         cv.put(FileDownloadModel.STATUS, FileDownloadStatus.completed);
         cv.put(FileDownloadModel.TOTAL, total);
         cv.put(FileDownloadModel.SOFAR, total);
+        update(model.getId(), cv);
+    }
+
+    @Override
+    public void updatePause(FileDownloadModel model, long sofar) {
+        model.setStatus(FileDownloadStatus.paused);
+        model.setSoFar(sofar);
+
+        // db
+        ContentValues cv = new ContentValues();
+        cv.put(FileDownloadModel.STATUS, FileDownloadStatus.paused);
+        cv.put(FileDownloadModel.SOFAR, sofar);
+        update(model.getId(), cv);
+    }
+
+    @Override
+    public void updatePending(FileDownloadModel model) {
+        model.setStatus(FileDownloadStatus.pending);
+
+        // db
+        ContentValues cv = new ContentValues();
+        cv.put(FileDownloadModel.STATUS, FileDownloadStatus.pending);
+        update(model.getId(), cv);
+    }
+
+    private void update(final int id, final ContentValues cv) {
         db.update(TABLE_NAME, cv, FileDownloadModel.ID + " = ? ", new String[]{String.valueOf(id)});
-    }
-
-    @Override
-    public void updatePause(int id) {
-        final FileDownloadModel downloadModel = find(id);
-        if (downloadModel != null) {
-            downloadModel.setStatus(FileDownloadStatus.paused);
-
-            // db
-            ContentValues cv = new ContentValues();
-            cv.put(FileDownloadModel.STATUS, FileDownloadStatus.paused);
-            db.update(TABLE_NAME, cv, FileDownloadModel.ID + " = ? ", new String[]{String.valueOf(id)});
-        }
-    }
-
-    @Override
-    public void updatePending(int id) {
-        final FileDownloadModel downloadModel = find(id);
-        if (downloadModel != null) {
-            downloadModel.setStatus(FileDownloadStatus.pending);
-
-            // db
-            ContentValues cv = new ContentValues();
-            cv.put(FileDownloadModel.STATUS, FileDownloadStatus.pending);
-            db.update(TABLE_NAME, cv, FileDownloadModel.ID + " = ? ", new String[]{String.valueOf(id)});
-        }
     }
 }

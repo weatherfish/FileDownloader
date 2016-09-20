@@ -23,9 +23,13 @@ import com.liulishuo.filedownloader.model.FileDownloadStatus;
 import com.liulishuo.filedownloader.util.FileDownloadHelper;
 
 /**
+ * An atom notification item which identify with a downloading task, they have the same downloading
+ * Id.
+ *
  * @see FileDownloadNotificationHelper
  * @see FileDownloadNotificationListener
  */
+@SuppressWarnings("WeakerAccess")
 public abstract class BaseNotificationItem {
 
     private int id, sofar, total;
@@ -68,7 +72,8 @@ public abstract class BaseNotificationItem {
 
     protected NotificationManager getManager() {
         if (manager == null) {
-            manager = (NotificationManager) FileDownloadHelper.getAppContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            manager = (NotificationManager) FileDownloadHelper.getAppContext().
+                    getSystemService(Context.NOTIFICATION_SERVICE);
         }
         return manager;
     }

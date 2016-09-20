@@ -19,18 +19,12 @@ package com.liulishuo.filedownloader.services;
 
 import com.liulishuo.filedownloader.model.FileDownloadModel;
 
-import java.util.Set;
+import java.util.List;
 
 /**
- * Created by Jacksgong on 9/24/15.
+ * The helper for handling all operations with the filedownloader database.
  */
 interface IFileDownloadDBHelper {
-
-    Set<FileDownloadModel> getAllUnComplete();
-
-    Set<FileDownloadModel> getAllCompleted();
-
-    void refreshDataFromDB();
 
     /**
      * @param id download id
@@ -42,19 +36,22 @@ interface IFileDownloadDBHelper {
 
     void update(final FileDownloadModel downloadModel);
 
-    void remove(final int id);
+    void update(final List<FileDownloadModel> downloadModelList);
 
-    void update(final int id, final byte status, final long soFar, final long total);
+    boolean remove(final int id);
 
-    void updateHeader(final int id, final String etag);
+    void updateConnected(final FileDownloadModel model, final long total, final String etag,
+                         final String fileName);
 
-    void updateError(final int id, final String errMsg);
+    void updateProgress(final FileDownloadModel model, final long soFar);
 
-    void updateRetry(final int id, final String errMsg, final int retryingTimes);
+    void updateError(final FileDownloadModel model, final Throwable throwable, final long sofar);
 
-    void updateComplete(final int id, final long total);
+    void updateRetry(final FileDownloadModel model, final Throwable throwable);
 
-    void updatePause(final int id);
+    void updateComplete(final FileDownloadModel model, final long total);
 
-    void updatePending(final int id);
+    void updatePause(final FileDownloadModel model, final long sofar);
+
+    void updatePending(final FileDownloadModel model);
 }

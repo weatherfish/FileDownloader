@@ -16,35 +16,54 @@
 
 package com.liulishuo.filedownloader.util;
 
+import android.annotation.SuppressLint;
 import android.app.Application;
 import android.content.Context;
+
+import com.liulishuo.filedownloader.IThreadPoolMonitor;
+import com.liulishuo.filedownloader.message.MessageSnapshotFlow;
+import com.liulishuo.filedownloader.message.MessageSnapshotTaker;
+import com.liulishuo.filedownloader.model.FileDownloadModel;
+import com.liulishuo.filedownloader.services.DownloadMgrInitialParams;
+
+import java.io.File;
 
 import okhttp3.OkHttpClient;
 
 /**
- * Created by Jacksgong on 12/17/15.
+ * The helper for cache the {@code APP_CONTEXT} and {@code OK_HTTP_CLIENT} for the main process and
+ * the filedownloader process.
+ *
+ * @see com.liulishuo.filedownloader.FileDownloader#init(Context, OkHttpClientCustomMaker)
  */
 public class FileDownloadHelper {
 
+    @SuppressLint("StaticFieldLeak")
     private static Context APP_CONTEXT;
+    private static DownloadMgrInitialParams DOWNLOAD_MANAGER_INITIAL_PARAMS;
 
-    // only effect on the ':filedownloader' progress.
-    private static OkHttpClient OK_HTTP_CLIENT;
-
-    public static void initAppContext(final Application application) {
-        APP_CONTEXT = application;
+    public static void holdContext(final Context context) {
+        APP_CONTEXT = context;
     }
 
     public static Context getAppContext() {
         return APP_CONTEXT;
     }
 
-    public static void setOkHttpClient(OkHttpClient client) {
-        OK_HTTP_CLIENT = client;
+    public static void initializeDownloadMgrParams(final OkHttpClientCustomMaker maker,
+                                                   final int maxNetworkThreadCount) {
+        if (!FileDownloadUtils.isDownloaderProcess(FileDownloadHelper.getAppContext())) {
+            throw new IllegalStateException(
+                    FileDownloadUtils.formatString("the DownloadMgrInitialParams is only " +
+                            "can be touched in the process which the download service settles on"));
+        }
+
+        DOWNLOAD_MANAGER_INITIAL_PARAMS = new DownloadMgrInitialParams(maker,
+                maxNetworkThreadCount);
     }
 
-    public static OkHttpClient getOkHttpClient() {
-        return OK_HTTP_CLIENT;
+    public static DownloadMgrInitialParams getDownloadMgrInitialParams() {
+        return DOWNLOAD_MANAGER_INITIAL_PARAMS;
     }
 
     public interface OkHttpClientCustomMaker {
@@ -58,6 +77,37 @@ public class FileDownloadHelper {
          * @see OkHttpClient
          */
         OkHttpClient customMake();
+    }
+
+    public static boolean inspectAndInflowDownloaded(int id, String path, boolean forceReDownload,
+                                                     boolean flowDirectly) {
+        if (forceReDownload) {
+            return false;
+        }
+
+        if (path != null) {
+            final File file = new File(path);
+            if (file.exists()) {
+                MessageSnapshotFlow.getImpl().inflow(MessageSnapshotTaker.
+                        catchCanReusedOldFile(id, file, flowDirectly));
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static boolean inspectAndInflowDownloading(int id, FileDownloadModel model,
+                                                      IThreadPoolMonitor monitor,
+                                                      boolean flowDirectly) {
+        if (monitor.isDownloading(model)) {
+            MessageSnapshotFlow.getImpl().
+                    inflow(MessageSnapshotTaker.catchWarn(id, model.getSoFar(), model.getTotal(),
+                            flowDirectly));
+            return true;
+        }
+
+        return false;
     }
 }
 

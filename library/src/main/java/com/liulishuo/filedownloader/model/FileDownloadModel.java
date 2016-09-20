@@ -17,13 +17,17 @@
 package com.liulishuo.filedownloader.model;
 
 import android.content.ContentValues;
-import android.os.Parcel;
-import android.os.Parcelable;
+
+import com.liulishuo.filedownloader.util.FileDownloadUtils;
 
 /**
- * Created by Jacksgong on 9/24/15.
+ * The model of the downloading task will be used in the filedownloader database.
+ *
+ * @see com.liulishuo.filedownloader.services.FileDownloadDBHelper
+ * @see com.liulishuo.filedownloader.services.FileDownloadDBOpenHelper
  */
-public class FileDownloadModel implements Parcelable {
+@SuppressWarnings("WeakerAccess")
+public class FileDownloadModel {
 
     public final static int DEFAULT_CALLBACK_PROGRESS_TIMES = 100;
 
@@ -39,8 +43,12 @@ public class FileDownloadModel implements Parcelable {
     private String path;
     public final static String PATH = "path";
 
-    private int callbackProgressTimes = DEFAULT_CALLBACK_PROGRESS_TIMES;
-    public final static String CALLBACK_PROGRESS_TIMES = "callbackProgressTimes";
+
+    private boolean pathAsDirectory;
+    public final static String PATH_AS_DIRECTORY = "pathAsDirectory";
+
+    private String filename;
+    public final static String FILENAME = "filename";
 
     private byte status;
     public final static String STATUS = "status";
@@ -58,9 +66,6 @@ public class FileDownloadModel implements Parcelable {
     private String eTag;
     public final static String ETAG = "etag";
 
-    private boolean isCanceled = false;
-
-
     public void setId(int id) {
         this.id = id;
     }
@@ -69,8 +74,9 @@ public class FileDownloadModel implements Parcelable {
         this.url = url;
     }
 
-    public void setPath(String path) {
+    public void setPath(String path, boolean pathAsDirectory) {
         this.path = path;
+        this.pathAsDirectory = pathAsDirectory;
     }
 
     public void setStatus(byte status) {
@@ -82,6 +88,7 @@ public class FileDownloadModel implements Parcelable {
     }
 
     public void setTotal(long total) {
+        this.isLargeFile = total > Integer.MAX_VALUE;
         this.total = total;
     }
 
@@ -97,6 +104,17 @@ public class FileDownloadModel implements Parcelable {
         return path;
     }
 
+    public String getTargetFilePath() {
+        return FileDownloadUtils.getTargetFilePath(getPath(), isPathAsDirectory(), getFilename());
+    }
+
+    public String getTempFilePath() {
+        if (getTargetFilePath() == null) {
+            return null;
+        }
+        return FileDownloadUtils.getTempPath(getTargetFilePath());
+    }
+
     public byte getStatus() {
         return status;
     }
@@ -109,28 +127,12 @@ public class FileDownloadModel implements Parcelable {
         return total;
     }
 
-    public int getCallbackProgressTimes() {
-        return callbackProgressTimes;
-    }
-
-    public void setCallbackProgressTimes(int callbackProgressTimes) {
-        this.callbackProgressTimes = callbackProgressTimes;
-    }
-
     public String getETag() {
         return eTag;
     }
 
     public void setETag(String eTag) {
         this.eTag = eTag;
-    }
-
-    public boolean isCanceled() {
-        return isCanceled;
-    }
-
-    public void setIsCancel(boolean isCancel) {
-        this.isCanceled = isCancel;
     }
 
     public String getErrMsg() {
@@ -141,63 +143,47 @@ public class FileDownloadModel implements Parcelable {
         this.errMsg = errMsg;
     }
 
+    public void setFilename(String filename) {
+        this.filename = filename;
+    }
+
+    public boolean isPathAsDirectory() {
+        return pathAsDirectory;
+    }
+
+    public String getFilename() {
+        return filename;
+    }
+
     public ContentValues toContentValues() {
         ContentValues cv = new ContentValues();
-        cv.put(ID, id);
-        cv.put(URL, url);
-        cv.put(PATH, path);
-//        cv.put(CALLBACK_PROGRESS_TIMES, callbackProgressTimes);
-        cv.put(STATUS, status);
-        cv.put(SOFAR, soFar);
-        cv.put(TOTAL, total);
-        cv.put(ERR_MSG, errMsg);
-        cv.put(ETAG, eTag);
+        cv.put(ID, getId());
+        cv.put(URL, getUrl());
+        cv.put(PATH, getPath());
+        cv.put(STATUS, getStatus());
+        cv.put(SOFAR, getSoFar());
+        cv.put(TOTAL, getTotal());
+        cv.put(ERR_MSG, getErrMsg());
+        cv.put(ETAG, getETag());
+        cv.put(PATH_AS_DIRECTORY, isPathAsDirectory());
+        if (isPathAsDirectory() && getFilename() != null) {
+            cv.put(FILENAME, getFilename());
+        }
+
         return cv;
     }
 
-    @Override
-    public int describeContents() {
-        return 0;
+
+    private boolean isLargeFile;
+
+    public boolean isLargeFile() {
+        return isLargeFile;
     }
 
     @Override
-    public void writeToParcel(Parcel dest, int flags) {
-        dest.writeInt(this.id);
-        dest.writeString(this.url);
-        dest.writeString(this.path);
-        dest.writeInt(this.callbackProgressTimes);
-        dest.writeByte(this.status);
-        dest.writeInt(this.status);
-        dest.writeLong(this.soFar);
-        dest.writeLong(this.total);
-        dest.writeString(this.errMsg);
-        dest.writeString(this.eTag);
-        dest.writeByte(isCanceled ? (byte) 1 : (byte) 0);
+    public String toString() {
+        return FileDownloadUtils.formatString("id[%d], url[%s], path[%s], status[%d], sofar[%d]," +
+                        " total[%d], etag[%s], %s", id, url, path, status, soFar, total, eTag,
+                super.toString());
     }
-
-    public FileDownloadModel() {
-    }
-
-    protected FileDownloadModel(Parcel in) {
-        this.id = in.readInt();
-        this.url = in.readString();
-        this.path = in.readString();
-        this.callbackProgressTimes = in.readInt();
-        this.status = in.readByte();
-        this.soFar = in.readLong();
-        this.total = in.readLong();
-        this.errMsg = in.readString();
-        this.eTag = in.readString();
-        this.isCanceled = in.readByte() != 0;
-    }
-
-    public static final Creator<FileDownloadModel> CREATOR = new Creator<FileDownloadModel>() {
-        public FileDownloadModel createFromParcel(Parcel source) {
-            return new FileDownloadModel(source);
-        }
-
-        public FileDownloadModel[] newArray(int size) {
-            return new FileDownloadModel[size];
-        }
-    };
 }

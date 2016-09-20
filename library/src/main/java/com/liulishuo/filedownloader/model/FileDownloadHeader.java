@@ -19,13 +19,16 @@ package com.liulishuo.filedownloader.model;
 import android.os.Parcel;
 import android.os.Parcelable;
 
+import com.liulishuo.filedownloader.util.FileDownloadProperties;
+import com.liulishuo.filedownloader.util.FileDownloadUtils;
+
 import okhttp3.Headers;
 import okhttp3.Request;
 
 /**
- * We have already handled etag, and will add 'If-Match' & 'Range' value if it works.
- * <p/>
- * Created by Jacksgong on 1/17/16.
+ * We have already handled Etag internal for guaranteeing tasks resuming from the breakpoint, in
+ * other words, if the task has downloaded and got Etag, we will add the 'If-Match' and the 'Range'
+ * K-V to its request header automatically.
  */
 public class FileDownloadHeader implements Parcelable {
 
@@ -80,11 +83,23 @@ public class FileDownloadHeader implements Parcelable {
     @Override
     public void writeToParcel(Parcel dest, int flags) {
 
+        checkAndInitValues();
+        dest.writeString(nameAndValuesString);
+    }
+
+    private void checkAndInitValues() {
         if (headerBuilder != null) {
             nameAndValuesString = headerBuilder.build().toString();
         }
+    }
 
-        dest.writeString(nameAndValuesString);
+    public Headers getHeaders() {
+        if (!FileDownloadProperties.getImpl().PROCESS_NON_SEPARATE) {
+            throw new IllegalStateException("the headers object isn't accessible, when the " +
+                    "FileDownloadService in the separate process to UI process.");
+        }
+
+        return headerBuilder == null ? null : headerBuilder.build();
     }
 
     public FileDownloadHeader() {
@@ -118,19 +133,7 @@ public class FileDownloadHeader implements Parcelable {
                     break;
                 }
 
-                final String[] lineString = nameAndValuesString.split("\n");
-                namesAndValues = new String[lineString.length * 2];
-
-                for (int i = 0; i < lineString.length; i++) {
-                    final String[] nameAndValue = lineString[i].split(": ");
-                    /**
-                     * @see Headers#toString()
-                     * @see Headers#name(int)
-                     * @see Headers#value(int)
-                     */
-                    namesAndValues[i * 2] = nameAndValue[0];
-                    namesAndValues[i * 2 + 1] = nameAndValue[1];
-                }
+                namesAndValues = FileDownloadUtils.convertHeaderString(nameAndValuesString);
             }
 
 

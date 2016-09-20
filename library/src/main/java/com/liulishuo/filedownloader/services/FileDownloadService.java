@@ -16,130 +16,57 @@
 
 package com.liulishuo.filedownloader.services;
 
-import android.os.RemoteException;
+import android.annotation.SuppressLint;
+import android.app.Service;
+import android.content.Intent;
+import android.os.IBinder;
 
-import com.liulishuo.filedownloader.event.DownloadEventSampleListener;
-import com.liulishuo.filedownloader.event.DownloadTransferEvent;
-import com.liulishuo.filedownloader.event.IDownloadEvent;
-import com.liulishuo.filedownloader.i.IFileDownloadIPCCallback;
-import com.liulishuo.filedownloader.i.IFileDownloadIPCService;
-import com.liulishuo.filedownloader.model.FileDownloadHeader;
-import com.liulishuo.filedownloader.model.FileDownloadTransferModel;
-import com.liulishuo.filedownloader.util.FileDownloadHelper;
-import com.liulishuo.filedownloader.util.FileDownloadUtils;
+import com.liulishuo.filedownloader.util.FileDownloadProperties;
 
-import okhttp3.OkHttpClient;
+import java.lang.ref.WeakReference;
 
 /**
- * Created by Jacksgong on 9/23/15.
+ * The service is running for FileDownloader.
+ * <p/>
+ * You can add a command `process.non-separate=true` to the `filedownloader.properties` asset file
+ * to make the FileDownloadService runs in the main process, and by default the FileDownloadService
+ * runs in the separate process(`:filedownloader`).
  */
-public class FileDownloadService extends BaseFileService<IFileDownloadIPCCallback, FileDownloadService.FileDownloadServiceBinder> implements DownloadEventSampleListener.IEventListener {
+@SuppressLint("Registered")
+public class FileDownloadService extends Service {
 
-    private DownloadEventSampleListener mListener;
+    private IFileDownloadServiceHandler handler;
 
     @Override
     public void onCreate() {
         super.onCreate();
-        mListener = new DownloadEventSampleListener(this);
+        if (FileDownloadProperties.getImpl().PROCESS_NON_SEPARATE) {
+            handler = new FDServiceSharedHandler(new WeakReference<>(this));
+        } else {
+            handler = new FDServiceSeparateHandler(new WeakReference<>(this));
+        }
+    }
 
-        FileDownloadProcessEventPool.getImpl().addListener(DownloadTransferEvent.ID, mListener);
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        handler.onStartCommand(intent, flags, startId);
+        return START_STICKY;
     }
 
     @Override
     public void onDestroy() {
+        handler.onDestroy();
         super.onDestroy();
-
-        FileDownloadProcessEventPool.getImpl().removeListener(DownloadTransferEvent.ID, mListener);
     }
 
     @Override
-    protected FileDownloadServiceBinder createBinder() {
-        return new FileDownloadServiceBinder(FileDownloadHelper.getOkHttpClient());
+    public IBinder onBind(Intent intent) {
+        return handler.onBind(intent);
     }
 
-    @Override
-    protected boolean handleCallback(int cmd, IFileDownloadIPCCallback IFileDownloadIPCCallback, Object... objects) throws RemoteException {
-        IFileDownloadIPCCallback.callback(((DownloadTransferEvent) objects[0]).getTransfer());
-        return false;
+    public static class SharedMainProcessService extends FileDownloadService {
     }
 
-    @Override
-    public boolean callback(IDownloadEvent event) {
-
-        if (event instanceof DownloadTransferEvent) {
-            callback(0, event);
-        }
-        return false;
-    }
-
-    protected class FileDownloadServiceBinder extends IFileDownloadIPCService.Stub {
-
-
-        private final FileDownloadMgr downloadManager;
-
-        private FileDownloadServiceBinder(OkHttpClient customOkhttpClient) {
-            this.downloadManager = new FileDownloadMgr(customOkhttpClient);
-        }
-
-        @Override
-        public void registerCallback(IFileDownloadIPCCallback callback) throws RemoteException {
-            register(callback);
-        }
-
-        @Override
-        public void unregisterCallback(IFileDownloadIPCCallback callback) throws RemoteException {
-            unregister(callback);
-        }
-
-        @Override
-        public FileDownloadTransferModel checkReuse(String url, String path) throws RemoteException {
-            return downloadManager.checkReuse(FileDownloadUtils.generateId(url, path));
-        }
-
-        @Override
-        public FileDownloadTransferModel checkReuse2(int id) throws RemoteException {
-            return downloadManager.checkReuse(id);
-        }
-
-        @Override
-        public boolean checkDownloading(String url, String path) throws RemoteException {
-            return downloadManager.checkDownloading(url, path);
-        }
-
-        @Override
-        public void start(String url, String path, int callbackProgressTimes, int autoRetryTimes,
-                          FileDownloadHeader header) throws RemoteException {
-            downloadManager.start(url, path, callbackProgressTimes, autoRetryTimes, header);
-        }
-
-        @Override
-        public boolean pause(int downloadId) throws RemoteException {
-            return downloadManager.pause(downloadId);
-        }
-
-        @Override
-        public void pauseAllTasks() throws RemoteException {
-            downloadManager.pauseAll();
-        }
-
-        @Override
-        public long getSofar(int downloadId) throws RemoteException {
-            return downloadManager.getSoFar(downloadId);
-        }
-
-        @Override
-        public long getTotal(int downloadId) throws RemoteException {
-            return downloadManager.getTotal(downloadId);
-        }
-
-        @Override
-        public int getStatus(int downloadId) throws RemoteException {
-            return downloadManager.getStatus(downloadId);
-        }
-
-        @Override
-        public boolean isIdle() throws RemoteException {
-            return downloadManager.isIdle();
-        }
+    public static class SeparateProcessService extends FileDownloadService {
     }
 }

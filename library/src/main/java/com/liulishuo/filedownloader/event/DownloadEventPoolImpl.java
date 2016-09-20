@@ -16,36 +16,24 @@
 
 package com.liulishuo.filedownloader.event;
 
-import android.os.Handler;
-import android.os.Looper;
-
+import com.liulishuo.filedownloader.util.FileDownloadExecutors;
 import com.liulishuo.filedownloader.util.FileDownloadLog;
 
 import junit.framework.Assert;
 
 import java.util.HashMap;
 import java.util.LinkedList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+
+import cn.dreamtobe.threadpool.IExecutor;
 
 /**
- * Created by Jacksgong on 15/6/23.
+ * Implementing actions for event pool.
  */
 public class DownloadEventPoolImpl implements IDownloadEventPool {
 
-    private final ExecutorService threadPool = new ThreadPoolExecutor(3, 30,
-            10, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<Runnable>());
+    private final IExecutor threadPool = FileDownloadExecutors.newDefaultThreadPool(10, "EventPool");
 
     private final HashMap<String, LinkedList<IDownloadListener>> listenersMap = new HashMap<>();
-
-    private final Handler handler;
-
-    public DownloadEventPoolImpl() {
-        handler = new Handler(Looper.getMainLooper());
-    }
 
     @Override
     public boolean addListener(final String eventId, final IDownloadListener listener) {
@@ -57,7 +45,7 @@ public class DownloadEventPoolImpl implements IDownloadEventPool {
         LinkedList<IDownloadListener> container = listenersMap.get(eventId);
 
         if (container == null) {
-            synchronized (eventId) {
+            synchronized (eventId.intern()) {
                 container = listenersMap.get(eventId);
                 if (container == null) {
                     listenersMap.put(eventId, container = new LinkedList<>());
@@ -66,7 +54,7 @@ public class DownloadEventPoolImpl implements IDownloadEventPool {
         }
 
 
-        synchronized (eventId) {
+        synchronized (eventId.intern()) {
             return container.add(listener);
         }
     }
@@ -76,11 +64,10 @@ public class DownloadEventPoolImpl implements IDownloadEventPool {
         if (FileDownloadLog.NEED_LOG) {
             FileDownloadLog.v(this, "removeListener %s", eventId);
         }
-//        Assert.assertNotNull("EventPoolImpl.remove", listener);
 
         LinkedList<IDownloadListener> container = listenersMap.get(eventId);
         if (container == null) {
-            synchronized (eventId) {
+            synchronized (eventId.intern()) {
                 container = listenersMap.get(eventId);
             }
         }
@@ -89,20 +76,13 @@ public class DownloadEventPoolImpl implements IDownloadEventPool {
             return false;
         }
 
-        synchronized (eventId) {
+        synchronized (eventId.intern()) {
             boolean succeed = container.remove(listener);
             if (container.size() <= 0) {
-                listenersMap.remove(container);
+                listenersMap.remove(eventId);
             }
             return succeed;
         }
-    }
-
-    public boolean post2UI(final Runnable runnable) {
-        if (handler == null) {
-            return false;
-        }
-        return handler.post(runnable);
     }
 
     @Override
@@ -114,7 +94,7 @@ public class DownloadEventPoolImpl implements IDownloadEventPool {
         String eventId = event.getId();
         LinkedList<IDownloadListener> listeners = listenersMap.get(eventId);
         if (listeners == null) {
-            synchronized (eventId) {
+            synchronized (eventId.intern()) {
                 listeners = listenersMap.get(eventId);
                 if (listeners == null) {
                     if (FileDownloadLog.NEED_LOG) {
@@ -130,40 +110,13 @@ public class DownloadEventPoolImpl implements IDownloadEventPool {
     }
 
     @Override
-    public void asyncPublish(final IDownloadEvent event, final Looper looper) {
-        if (FileDownloadLog.NEED_LOG) {
-            FileDownloadLog.v(this, "asyncPublish %s", event.getId());
-        }
-        Assert.assertNotNull("EventPoolImpl.asyncPublish event", event);
-        Assert.assertNotNull("EventPoolImpl.asyncPublish looper", looper);
-        Handler handler = new Handler(looper);
-        handler.post(new Runnable() {
-            @Override
-            public void run() {
-                DownloadEventPoolImpl.this.publish(event);
-            }
-        });
-    }
-
-
-    @Override
     public void asyncPublishInNewThread(final IDownloadEvent event) {
         if (FileDownloadLog.NEED_LOG) {
             FileDownloadLog.v(this, "asyncPublishInNewThread %s", event.getId());
         }
         Assert.assertNotNull("EventPoolImpl.asyncPublish event", event);
 
-        threadPool.execute(new Runnable() {
-            @Override
-            public void run() {
-                DownloadEventPoolImpl.this.publish(event);
-            }
-        });
-    }
-
-    @Override
-    public void asyncPublishInMain(final IDownloadEvent event) {
-        post2UI(new Runnable() {
+        threadPool.execute("PublishEvent", new Runnable() {
             @Override
             public void run() {
                 DownloadEventPoolImpl.this.publish(event);
@@ -172,20 +125,6 @@ public class DownloadEventPoolImpl implements IDownloadEventPool {
     }
 
     private void trigger(final LinkedList<IDownloadListener> listeners, final IDownloadEvent event) {
-        // do not handle Order.
-//        try {
-//            if (event.getOrder()) {
-//                Collections.sort(listeners, new Comparator<IDownloadListener>() {
-//                    @Override
-//                    public int compare(IDownloadListener lhs, IDownloadListener rhs) {
-//                        return rhs.getPriority() - lhs.getPriority();
-//                    }
-//                });
-//            }
-//
-//        } catch (Exception e) {
-//            FileDownloadLog.e(this, e, "trigger error, %s", event != null ? event.getId() : null);
-//        }
 
         final Object[] lists = listeners.toArray();
         for (Object o : lists) {
@@ -197,16 +136,5 @@ public class DownloadEventPoolImpl implements IDownloadEventPool {
         if (event.callback != null) {
             event.callback.run();
         }
-    }
-
-    @Override
-    public boolean hasListener(final IDownloadEvent event) {
-        if (FileDownloadLog.NEED_LOG) {
-            FileDownloadLog.v(this, "hasListener %s", event.getId());
-        }
-        Assert.assertNotNull("EventPoolImpl.hasListener", event);
-        String eventId = event.getId();
-        LinkedList<IDownloadListener> listeners = listenersMap.get(eventId);
-        return listeners != null && listeners.size() > 0;
     }
 }

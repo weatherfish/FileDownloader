@@ -16,34 +16,39 @@
 
 package com.liulishuo.filedownloader;
 
+import android.app.Notification;
 import android.os.IBinder;
 import android.os.RemoteException;
 
-import com.liulishuo.filedownloader.event.DownloadTransferEvent;
 import com.liulishuo.filedownloader.i.IFileDownloadIPCCallback;
 import com.liulishuo.filedownloader.i.IFileDownloadIPCService;
+import com.liulishuo.filedownloader.message.MessageSnapshot;
+import com.liulishuo.filedownloader.message.MessageSnapshotFlow;
 import com.liulishuo.filedownloader.model.FileDownloadHeader;
 import com.liulishuo.filedownloader.model.FileDownloadStatus;
-import com.liulishuo.filedownloader.model.FileDownloadTransferModel;
 import com.liulishuo.filedownloader.services.BaseFileServiceUIGuard;
-import com.liulishuo.filedownloader.services.FileDownloadService;
+import com.liulishuo.filedownloader.services.FileDownloadService.SeparateProcessService;
+import com.liulishuo.filedownloader.util.DownloadServiceNotConnectedHelper;
 
 
 /**
- * Created by Jacksgong on 9/23/15.
+ * The UI-Guard for FileDownloader-Process.
+ * <p/>
+ * The only Class can access the FileDownload-Process, and the only Class can receive the event from
+ * the FileDownloader-Process through Binder.
+ * <p/>
+ * We will use this UIGuard as default, because the FileDownloadService runs in the separate process
+ * `:filedownloader` as default, If you want to share the main process to run the FileDownloadService,
+ * just add a command `process.non-separate=true` in `/filedownloader.properties`.
+ *
+ * @see FileDownloadServiceSharedTransmit
  */
-class FileDownloadServiceUIGuard extends BaseFileServiceUIGuard<FileDownloadServiceUIGuard.FileDownloadServiceCallback, IFileDownloadIPCService> {
+class FileDownloadServiceUIGuard extends
+        BaseFileServiceUIGuard<FileDownloadServiceUIGuard.FileDownloadServiceCallback,
+                IFileDownloadIPCService> {
 
-    private final static class HolderClass {
-        private final static FileDownloadServiceUIGuard INSTANCE = new FileDownloadServiceUIGuard();
-    }
-
-    public static FileDownloadServiceUIGuard getImpl() {
-        return HolderClass.INSTANCE;
-    }
-
-    protected FileDownloadServiceUIGuard() {
-        super(FileDownloadService.class);
+    FileDownloadServiceUIGuard() {
+        super(SeparateProcessService.class);
     }
 
     @Override
@@ -66,11 +71,11 @@ class FileDownloadServiceUIGuard extends BaseFileServiceUIGuard<FileDownloadServ
         service.unregisterCallback(fileDownloadServiceCallback);
     }
 
-    public static class FileDownloadServiceCallback extends IFileDownloadIPCCallback.Stub {
+    protected static class FileDownloadServiceCallback extends IFileDownloadIPCCallback.Stub {
 
         @Override
-        public void callback(FileDownloadTransferModel transfer) throws RemoteException {
-            FileDownloadEventPool.getImpl().receiveByService(new DownloadTransferEvent(transfer));
+        public void callback(MessageSnapshot snapshot) throws RemoteException {
+            MessageSnapshotFlow.getImpl().inflow(snapshot);
         }
     }
 
@@ -81,15 +86,20 @@ class FileDownloadServiceUIGuard extends BaseFileServiceUIGuard<FileDownloadServ
      * @param autoRetryTimes        for auto retry times when error
      * @param header                for http header
      */
-    public boolean startDownloader(final String url, final String path,
-                                   final int callbackProgressTimes, final int autoRetryTimes,
-                                   final FileDownloadHeader header) {
-        if (getService() == null) {
-            return false;
+    @Override
+    public boolean start(final String url, final String path, final boolean pathAsDirectory,
+                         final int callbackProgressTimes,
+                         final int callbackProgressMinIntervalMillis,
+                         final int autoRetryTimes, final boolean forceReDownload,
+                         final FileDownloadHeader header, final boolean isWifiRequired) {
+        if (!isConnected()) {
+            return DownloadServiceNotConnectedHelper.start(url, path, pathAsDirectory);
         }
 
         try {
-            getService().start(url, path, callbackProgressTimes, autoRetryTimes, header);
+            getService().start(url, path, pathAsDirectory, callbackProgressTimes,
+                    callbackProgressMinIntervalMillis, autoRetryTimes, forceReDownload, header,
+                    isWifiRequired);
         } catch (RemoteException e) {
             e.printStackTrace();
 
@@ -99,13 +109,14 @@ class FileDownloadServiceUIGuard extends BaseFileServiceUIGuard<FileDownloadServ
         return true;
     }
 
-    public boolean pauseDownloader(final int downloadId) {
-        if (getService() == null) {
-            return false;
+    @Override
+    public boolean pause(final int id) {
+        if (!isConnected()) {
+            return DownloadServiceNotConnectedHelper.pause(id);
         }
 
         try {
-            return getService().pause(downloadId);
+            return getService().pause(id);
         } catch (RemoteException e) {
             e.printStackTrace();
         }
@@ -113,37 +124,10 @@ class FileDownloadServiceUIGuard extends BaseFileServiceUIGuard<FileDownloadServ
         return false;
     }
 
-    public FileDownloadTransferModel checkReuse(final String url, final String path) {
-        if (getService() == null) {
-            return null;
-        }
-
-        try {
-            return getService().checkReuse(url, path);
-        } catch (RemoteException e) {
-            e.printStackTrace();
-        }
-
-        return null;
-    }
-
-    public FileDownloadTransferModel checkReuse(final int id) {
-        if (getService() == null) {
-            return null;
-        }
-
-        try {
-            return getService().checkReuse2(id);
-        } catch (RemoteException e) {
-            e.printStackTrace();
-        }
-
-        return null;
-    }
-
-    public boolean checkIsDownloading(final String url, final String path) {
-        if (getService() == null) {
-            return false;
+    @Override
+    public boolean isDownloading(final String url, final String path) {
+        if (!isConnected()) {
+            return DownloadServiceNotConnectedHelper.isDownloading(url, path);
         }
 
         try {
@@ -155,14 +139,15 @@ class FileDownloadServiceUIGuard extends BaseFileServiceUIGuard<FileDownloadServ
         return false;
     }
 
-    public long getSofar(final int downloadId) {
-        long val = 0;
-        if (getService() == null) {
-            return val;
+    @Override
+    public long getSofar(final int id) {
+        if (!isConnected()) {
+            return DownloadServiceNotConnectedHelper.getSofar(id);
         }
 
+        long val = 0;
         try {
-            val = getService().getSofar(downloadId);
+            val = getService().getSofar(id);
         } catch (RemoteException e) {
             e.printStackTrace();
         }
@@ -170,14 +155,15 @@ class FileDownloadServiceUIGuard extends BaseFileServiceUIGuard<FileDownloadServ
         return val;
     }
 
-    public long getTotal(final int downloadId) {
-        long val = 0;
-        if (getService() == null) {
-            return val;
+    @Override
+    public long getTotal(final int id) {
+        if (!isConnected()) {
+            return DownloadServiceNotConnectedHelper.getTotal(id);
         }
 
+        long val = 0;
         try {
-            val = getService().getTotal(downloadId);
+            val = getService().getTotal(id);
         } catch (RemoteException e) {
             e.printStackTrace();
         }
@@ -185,14 +171,15 @@ class FileDownloadServiceUIGuard extends BaseFileServiceUIGuard<FileDownloadServ
         return val;
     }
 
-    public int getStatus(final int downloadId){
-        int status = FileDownloadStatus.INVALID_STATUS;
-        if (getService() == null) {
-            return status;
+    @Override
+    public byte getStatus(final int id) {
+        if (!isConnected()) {
+            return DownloadServiceNotConnectedHelper.getStatus(id);
         }
 
+        byte status = FileDownloadStatus.INVALID_STATUS;
         try {
-            status = getService().getStatus(downloadId);
+            status = getService().getStatus(id);
         } catch (RemoteException e) {
             e.printStackTrace();
         }
@@ -200,8 +187,10 @@ class FileDownloadServiceUIGuard extends BaseFileServiceUIGuard<FileDownloadServ
         return status;
     }
 
-    public void pauseAllTasks(){
-        if (getService() == null) {
+    @Override
+    public void pauseAllTasks() {
+        if (!isConnected()) {
+            DownloadServiceNotConnectedHelper.pauseAllTasks();
             return;
         }
 
@@ -215,9 +204,10 @@ class FileDownloadServiceUIGuard extends BaseFileServiceUIGuard<FileDownloadServ
     /**
      * @return any error, will return true
      */
-    public boolean isIdle(){
-        if (getService() == null) {
-            return true;
+    @Override
+    public boolean isIdle() {
+        if (!isConnected()) {
+            return DownloadServiceNotConnectedHelper.isIdle();
         }
 
         try {
@@ -227,5 +217,63 @@ class FileDownloadServiceUIGuard extends BaseFileServiceUIGuard<FileDownloadServ
         }
 
         return true;
+    }
+
+    @Override
+    public void startForeground(int notificationId, Notification notification) {
+        if (!isConnected()) {
+            DownloadServiceNotConnectedHelper.startForeground(notificationId, notification);
+            return;
+        }
+
+        try {
+            getService().startForeground(notificationId, notification);
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public void stopForeground(boolean removeNotification) {
+        if (!isConnected()) {
+            DownloadServiceNotConnectedHelper.stopForeground(removeNotification);
+            return;
+        }
+
+        try {
+            getService().stopForeground(removeNotification);
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public boolean setMaxNetworkThreadCount(int count) {
+        if (!isConnected()) {
+            return DownloadServiceNotConnectedHelper.setMaxNetworkThreadCount(count);
+        }
+
+        try {
+            return getService().setMaxNetworkThreadCount(count);
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean clearTaskData(int id) {
+        if (!isConnected()) {
+            return DownloadServiceNotConnectedHelper.clearTaskData(id);
+        }
+
+        try {
+            return getService().clearTaskData(id);
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+
+        return false;
     }
 }

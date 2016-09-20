@@ -5,7 +5,10 @@
       <GradleProjectSettings>
         <option name="distributionType" value="DEFAULT_WRAPPED" />
         <option name="externalProjectPath" value="$PROJECT_DIR$" />
+<<<<<<< HEAD
         <option name="gradleJvm" value="1.8" />
+=======
+>>>>>>> lingochamp/master
         <option name="modules">
           <set>
             <option value="$PROJECT_DIR$" />
@@ -13,6 +16,10 @@
             <option value="$PROJECT_DIR$/library" />
           </set>
         </option>
+<<<<<<< HEAD
+=======
+        <option name="resolveModulePerSourceSet" value="false" />
+>>>>>>> lingochamp/master
       </GradleProjectSettings>
     </option>
   </component>

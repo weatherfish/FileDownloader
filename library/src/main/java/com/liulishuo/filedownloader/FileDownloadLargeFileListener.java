@@ -16,78 +16,77 @@
 
 package com.liulishuo.filedownloader;
 
-import com.liulishuo.filedownloader.event.IDownloadEvent;
+import com.liulishuo.filedownloader.message.FileDownloadMessage;
+import com.liulishuo.filedownloader.message.MessageSnapshot;
 import com.liulishuo.filedownloader.model.FileDownloadStatus;
 
 /**
- * Created by Jacksgong on 1/4/16.
- *
- * For file size greater than 1.99G
+ * The listener for listening the downloading status changing.
+ * <p>
+ * This listener will be used when the file size of the task is greater than 1.99G.
  */
+@SuppressWarnings({"WeakerAccess", "UnusedParameters"})
 public abstract class FileDownloadLargeFileListener extends FileDownloadListener {
 
     public FileDownloadLargeFileListener() {
-        this(0);
     }
 
+    /**
+     * @see #FileDownloadLargeFileListener()
+     * @deprecated not handle priority any more
+     */
     public FileDownloadLargeFileListener(int priority) {
+        //noinspection deprecation
         super(priority);
     }
 
 
     @Override
-    public boolean callback(IDownloadEvent event) {
-        if (!(event instanceof FileDownloadEvent)) {
-            return false;
-        }
+    public boolean callback(FileDownloadMessage message) {
+        final MessageSnapshot snapShot = message.getSnapshot();
 
-        final FileDownloadEvent downloaderEvent = ((FileDownloadEvent) event);
-
-
-        switch (downloaderEvent.getStatus()) {
+        switch (snapShot.getStatus()) {
             case FileDownloadStatus.pending:
-                pending(downloaderEvent.getDownloader(),
-                        downloaderEvent.getDownloader().getLargeFileSoFarBytes(),
-                        downloaderEvent.getDownloader().getLargeFileTotalBytes());
+                pending(message.getTask(),
+                        snapShot.getLargeSofarBytes(),
+                        snapShot.getLargeTotalBytes());
                 break;
             case FileDownloadStatus.connected:
-                connected(downloaderEvent.getDownloader(),
-                        downloaderEvent.getDownloader().getEtag(),
-                        downloaderEvent.getDownloader().isContinue(),
-                        downloaderEvent.getDownloader().getLargeFileSoFarBytes(),
-                        downloaderEvent.getDownloader().getLargeFileTotalBytes());
+                connected(message.getTask(),
+                        snapShot.getEtag(),
+                        snapShot.isResuming(),
+                        message.getTask().getLargeFileSoFarBytes(),
+                        snapShot.getLargeTotalBytes());
                 break;
             case FileDownloadStatus.progress:
-                progress(downloaderEvent.getDownloader(),
-                        downloaderEvent.getDownloader().getLargeFileSoFarBytes(),
-                        downloaderEvent.getDownloader().getLargeFileTotalBytes());
-                break;
-
-            case FileDownloadStatus.blockComplete:
-                blockComplete(downloaderEvent.getDownloader());
+                progress(message.getTask(),
+                        snapShot.getLargeSofarBytes(),
+                        message.getTask().getLargeFileTotalBytes());
                 break;
             case FileDownloadStatus.retry:
-                retry(downloaderEvent.getDownloader(),
-                        downloaderEvent.getDownloader().getEx(),
-                        downloaderEvent.getDownloader().getRetryingTimes(),
-                        downloaderEvent.getDownloader().getLargeFileSoFarBytes());
+                retry(message.getTask(),
+                        snapShot.getThrowable(),
+                        snapShot.getRetryingTimes(),
+                        snapShot.getLargeSofarBytes());
                 break;
-
+            case FileDownloadStatus.blockComplete:
+                blockComplete(message.getTask());
+                break;
             case FileDownloadStatus.completed:
-                completed(downloaderEvent.getDownloader());
+                completed(message.getTask());
                 break;
             case FileDownloadStatus.error:
-                error(downloaderEvent.getDownloader(),
-                        downloaderEvent.getDownloader().getEx());
+                error(message.getTask(),
+                        snapShot.getThrowable());
                 break;
             case FileDownloadStatus.paused:
-                paused(downloaderEvent.getDownloader(),
-                        downloaderEvent.getDownloader().getLargeFileSoFarBytes(),
-                        downloaderEvent.getDownloader().getLargeFileTotalBytes());
+                paused(message.getTask(),
+                        snapShot.getLargeSofarBytes(),
+                        snapShot.getLargeTotalBytes());
                 break;
             case FileDownloadStatus.warn:
                 // already same url & path in pending/running list
-                warn(downloaderEvent.getDownloader());
+                warn(message.getTask());
                 break;
         }
 
@@ -102,7 +101,8 @@ public abstract class FileDownloadLargeFileListener extends FileDownloadListener
      * @param soFarBytes Already downloaded bytes stored in the db
      * @param totalBytes Total bytes stored in the db
      */
-    protected abstract void pending(final BaseDownloadTask task, final long soFarBytes, final long totalBytes);
+    protected abstract void pending(final BaseDownloadTask task, final long soFarBytes,
+                                    final long totalBytes);
 
     /**
      * Connected
@@ -113,8 +113,9 @@ public abstract class FileDownloadLargeFileListener extends FileDownloadListener
      * @param soFarBytes Number of bytes download so far
      * @param totalBytes Total size of the download in bytes
      */
-    protected void connected(final BaseDownloadTask task, final String etag, final boolean isContinue, final long soFarBytes, final long totalBytes) {
-
+    @SuppressWarnings("EmptyMethod")
+    protected void connected(final BaseDownloadTask task, final String etag, final boolean isContinue,
+                             final long soFarBytes, final long totalBytes) {
     }
 
     /**
@@ -122,7 +123,8 @@ public abstract class FileDownloadLargeFileListener extends FileDownloadListener
      * @param soFarBytes Number of bytes download so far
      * @param totalBytes Total size of the download in bytes
      */
-    protected abstract void progress(final BaseDownloadTask task, final long soFarBytes, final long totalBytes);
+    protected abstract void progress(final BaseDownloadTask task, final long soFarBytes,
+                                     final long totalBytes);
 
     /**
      * Block completed in new thread
@@ -139,8 +141,9 @@ public abstract class FileDownloadLargeFileListener extends FileDownloadListener
      * @param retryingTimes How many times will retry
      * @param soFarBytes    Number of bytes download so far
      */
-    protected void retry(final BaseDownloadTask task, final Throwable ex, final int retryingTimes, final long soFarBytes) {
-
+    @SuppressWarnings("EmptyMethod")
+    protected void retry(final BaseDownloadTask task, final Throwable ex,
+                         final int retryingTimes, final long soFarBytes) {
     }
 
     // final width below methods
@@ -159,7 +162,8 @@ public abstract class FileDownloadLargeFileListener extends FileDownloadListener
      * @param soFarBytes Number of bytes download so far
      * @param totalBytes Total size of the download in bytes
      */
-    protected abstract void paused(final BaseDownloadTask task, final long soFarBytes, final long totalBytes);
+    protected abstract void paused(final BaseDownloadTask task, final long soFarBytes,
+                                   final long totalBytes);
 
     /**
      * Download error

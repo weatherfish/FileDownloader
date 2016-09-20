@@ -26,20 +26,24 @@ import android.os.IInterface;
 import android.os.RemoteException;
 
 import com.liulishuo.filedownloader.FileDownloadEventPool;
+import com.liulishuo.filedownloader.IFileDownloadServiceProxy;
 import com.liulishuo.filedownloader.event.DownloadServiceConnectChangedEvent;
 import com.liulishuo.filedownloader.util.FileDownloadLog;
+import com.liulishuo.filedownloader.util.FileDownloadUtils;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
 /**
- * Created by Jacksgong on 8/10/15.
+ * A UI-Guard in Main-Process for IPC, which is the only Object can access the other process in
+ * Main-Process with Binder.
  */
-public abstract class BaseFileServiceUIGuard<CALLBACK extends Binder, INTERFACE extends IInterface> implements ServiceConnection {
+public abstract class BaseFileServiceUIGuard<CALLBACK extends Binder, INTERFACE extends IInterface>
+        implements IFileDownloadServiceProxy, ServiceConnection {
 
     private final CALLBACK callback;
-    private INTERFACE service;
+    private volatile INTERFACE service;
     private final Class<?> serviceClass;
 
     private final HashMap<String, Object> uiCacheMap = new HashMap<>();
@@ -73,7 +77,8 @@ public abstract class BaseFileServiceUIGuard<CALLBACK extends Binder, INTERFACE 
             e.printStackTrace();
         }
 
-        final List<Runnable> runnableList = (List<Runnable>) connectedRunnableList.clone();
+        @SuppressWarnings("unchecked") final List<Runnable> runnableList =
+                (List<Runnable>) connectedRunnableList.clone();
         connectedRunnableList.clear();
         for (Runnable runnable : runnableList) {
             runnable.run();
@@ -94,7 +99,7 @@ public abstract class BaseFileServiceUIGuard<CALLBACK extends Binder, INTERFACE 
     }
 
     private void releaseConnect(final boolean isLost) {
-        if (this.service != null) {
+        if (!isLost && this.service != null) {
             try {
                 unregisterCallback(this.service, this.callback);
             } catch (RemoteException e) {
@@ -116,11 +121,22 @@ public abstract class BaseFileServiceUIGuard<CALLBACK extends Binder, INTERFACE 
     private final List<Context> BIND_CONTEXTS = new ArrayList<>();
     private final ArrayList<Runnable> connectedRunnableList = new ArrayList<>();
 
+    @Override
     public void bindStartByContext(final Context context) {
         bindStartByContext(context, null);
     }
 
+    @Override
     public void bindStartByContext(final Context context, final Runnable connectedRunnable) {
+        if (FileDownloadUtils.isDownloaderProcess(context)) {
+            throw new IllegalStateException("Fatal-Exception: You can't bind the " +
+                    "FileDownloadService in :filedownloader process.\n It's the invalid operation, " +
+                    "and is likely to cause unexpected problems.\n Maybe you want to use" +
+                    " non-separate process mode for FileDownloader, More detail about " +
+                    "non-separate mode, please move to wiki manually:" +
+                    " https://github.com/lingochamp/FileDownloader/wiki/filedownloader.properties");
+        }
+
         if (FileDownloadLog.NEED_LOG) {
             FileDownloadLog.d(this, "bindStartByContext %s", context.getClass().getSimpleName());
         }
@@ -141,6 +157,7 @@ public abstract class BaseFileServiceUIGuard<CALLBACK extends Binder, INTERFACE 
         context.startService(i);
     }
 
+    @Override
     public void unbindByContext(final Context context) {
         if (!BIND_CONTEXTS.contains(context)) {
             return;
@@ -188,6 +205,7 @@ public abstract class BaseFileServiceUIGuard<CALLBACK extends Binder, INTERFACE 
         return key;
     }
 
+    @Override
     public boolean isConnected() {
         return getService() != null;
     }

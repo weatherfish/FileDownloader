@@ -147,7 +147,7 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
                     taskStatusTv.setText(R.string.tasks_manager_demo_status_not_downloaded);
                     break;
             }
-            taskActionBtn.setText("Start");
+            taskActionBtn.setText(R.string.start);
         }
 
         public void updateDownloading(final int status, final long sofar, final long total) {
@@ -159,6 +159,9 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
             switch (status) {
                 case FileDownloadStatus.pending:
                     taskStatusTv.setText(R.string.tasks_manager_demo_status_pending);
+                    break;
+                case FileDownloadStatus.started:
+                    taskStatusTv.setText(R.string.tasks_manager_demo_status_started);
                     break;
                 case FileDownloadStatus.connected:
                     taskStatusTv.setText(R.string.tasks_manager_demo_status_connected);
@@ -172,7 +175,7 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
                     break;
             }
 
-            taskActionBtn.setText("Pause");
+            taskActionBtn.setText(R.string.pause);
         }
 
         private TextView taskNameTv;
@@ -195,7 +198,7 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
 
             private TaskItemViewHolder checkCurrentHolder(final BaseDownloadTask task) {
                 final TaskItemViewHolder tag = (TaskItemViewHolder) task.getTag();
-                if (tag.id != task.getDownloadId()) {
+                if (tag.id != task.getId()) {
                     return null;
                 }
 
@@ -213,6 +216,17 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
                 tag.updateDownloading(FileDownloadStatus.pending, soFarBytes
                         , totalBytes);
                 tag.taskStatusTv.setText(R.string.tasks_manager_demo_status_pending);
+            }
+
+            @Override
+            protected void started(BaseDownloadTask task) {
+                super.started(task);
+                final TaskItemViewHolder tag = checkCurrentHolder(task);
+                if (tag == null) {
+                    return;
+                }
+
+                tag.taskStatusTv.setText(R.string.tasks_manager_demo_status_started);
             }
 
             @Override
@@ -250,7 +264,7 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
 
                 tag.updateNotDownloaded(FileDownloadStatus.error, task.getLargeFileSoFarBytes()
                         , task.getLargeFileTotalBytes());
-                TasksManager.getImpl().removeTaskForViewHolder(task.getDownloadId());
+                TasksManager.getImpl().removeTaskForViewHolder(task.getId());
             }
 
             @Override
@@ -263,7 +277,7 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
 
                 tag.updateNotDownloaded(FileDownloadStatus.paused, soFarBytes, totalBytes);
                 tag.taskStatusTv.setText(R.string.tasks_manager_demo_status_paused);
-                TasksManager.getImpl().removeTaskForViewHolder(task.getDownloadId());
+                TasksManager.getImpl().removeTaskForViewHolder(task.getId());
             }
 
             @Override
@@ -275,7 +289,7 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
                 }
 
                 tag.updateDownloaded();
-                TasksManager.getImpl().removeTaskForViewHolder(task.getDownloadId());
+                TasksManager.getImpl().removeTaskForViewHolder(task.getId());
             }
         };
         private View.OnClickListener taskActionOnClickListener = new View.OnClickListener() {
@@ -286,19 +300,13 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
                 }
 
                 TaskItemViewHolder holder = (TaskItemViewHolder) v.getTag();
-                final int status = TasksManager.getImpl().getStatus(holder.id);
 
-                if (TasksManager.getImpl().isDownloaded(status)
-                        && TasksManager.getImpl().isExist(holder.id)) {
-                    // has downloaded
-                    new File(TasksManager.getImpl().get(holder.position).getPath()).delete();
-                    holder.taskActionBtn.setEnabled(true);
-                    holder.updateNotDownloaded(FileDownloadStatus.INVALID_STATUS, 0, 0);
-                } else if (TasksManager.getImpl().isDownloading(status)) {
-                    // downloading
+                CharSequence action = ((TextView) v).getText();
+                if (action.equals(v.getResources().getString(R.string.pause))) {
                     // to pause
                     FileDownloader.getImpl().pause(holder.id);
-                } else {
+                } else if (action.equals(v.getResources().getString(R.string.start))) {
+                    // to start
                     // to start
                     final TasksManagerModel model = TasksManager.getImpl().get(holder.position);
                     final BaseDownloadTask task = FileDownloader.getImpl().create(model.getUrl())
@@ -307,13 +315,17 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
                             .setListener(taskDownloadListener);
 
                     TasksManager.getImpl()
-                            .addTaskForViewHoder(task);
+                            .addTaskForViewHolder(task);
 
                     TasksManager.getImpl()
                             .updateViewHolder(holder.id, holder);
 
                     task.start();
-
+                } else if (action.equals(v.getResources().getString(R.string.delete))) {
+                    // to delete
+                    new File(TasksManager.getImpl().get(holder.position).getPath()).delete();
+                    holder.taskActionBtn.setEnabled(true);
+                    holder.updateNotDownloaded(FileDownloadStatus.INVALID_STATUS, 0, 0);
                 }
             }
         };
@@ -338,20 +350,26 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
             holder.taskNameTv.setText(model.getName());
 
             TasksManager.getImpl()
-                            .updateViewHolder(holder.id, holder);
+                    .updateViewHolder(holder.id, holder);
 
             holder.taskActionBtn.setEnabled(true);
 
-            final int status = TasksManager.getImpl().getStatus(model.getId());
 
             if (TasksManager.getImpl().isReady()) {
-                if (!TasksManager.getImpl().isExist(model.getId())) {
+                final int status = TasksManager.getImpl().getStatus(model.getId(), model.getPath());
+                if (status == FileDownloadStatus.pending || status == FileDownloadStatus.started ||
+                        status == FileDownloadStatus.connected) {
+                    // start task, but file not created yet
+                    holder.updateDownloading(status, TasksManager.getImpl().getSoFar(model.getId())
+                            , TasksManager.getImpl().getTotal(model.getId()));
+                } else if (!new File(model.getPath()).exists() &&
+                        !new File(FileDownloadUtils.getTempPath(model.getPath())).exists()) {
                     // not exist file
                     holder.updateNotDownloaded(status, 0, 0);
                 } else if (TasksManager.getImpl().isDownloaded(status)) {
                     // already downloaded and exist
                     holder.updateDownloaded();
-                } else if (TasksManager.getImpl().isDownloading(status)) {
+                } else if (status == FileDownloadStatus.progress) {
                     // downloading
                     holder.updateDownloading(status, TasksManager.getImpl().getSoFar(model.getId())
                             , TasksManager.getImpl().getTotal(model.getId()));
@@ -387,6 +405,7 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
 
         private TasksManagerDBController dbController;
         private List<TasksManagerModel> modelList;
+
         private TasksManager() {
             dbController = new TasksManagerDBController();
             modelList = dbController.getAllTasks();
@@ -396,22 +415,21 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
 
         private void initDemo() {
             if (modelList.size() <= 0) {
-                final int demoSize = 16;
+                final int demoSize = Constant.BIG_FILE_URLS.length;
                 for (int i = 0; i < demoSize; i++) {
-                    final String url = Constant.URLS[i];
+                    final String url = Constant.BIG_FILE_URLS[i];
                     addTask(url);
                 }
-
-                modelList = dbController.getAllTasks();
             }
         }
 
         private SparseArray<BaseDownloadTask> taskSparseArray = new SparseArray<>();
-        public void addTaskForViewHoder(final BaseDownloadTask task) {
-            taskSparseArray.put(task.getDownloadId(), task);
+
+        public void addTaskForViewHolder(final BaseDownloadTask task) {
+            taskSparseArray.put(task.getId(), task);
         }
 
-        public void removeTaskForViewHolder(final int id){
+        public void removeTaskForViewHolder(final int id) {
             taskSparseArray.remove(id);
         }
 
@@ -424,15 +442,14 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
             task.setTag(holder);
         }
 
-        public void releaseTask(){
+        public void releaseTask() {
             taskSparseArray.clear();
         }
 
         private FileDownloadConnectListener listener;
 
-        public void onCreate(final WeakReference<TasksManagerDemoActivity> activityWeakReference) {
-            FileDownloader.getImpl().bindService();
-
+        private void registerServiceConnectionListener(final WeakReference<TasksManagerDemoActivity>
+                                                               activityWeakReference) {
             if (listener != null) {
                 FileDownloader.getImpl().removeServiceConnectListener(listener);
             }
@@ -463,9 +480,20 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
             FileDownloader.getImpl().addServiceConnectListener(listener);
         }
 
-        public void onDestroy() {
+        private void unregisterServiceConnectionListener() {
             FileDownloader.getImpl().removeServiceConnectListener(listener);
             listener = null;
+        }
+
+        public void onCreate(final WeakReference<TasksManagerDemoActivity> activityWeakReference) {
+            if (!FileDownloader.getImpl().isServiceConnected()) {
+                FileDownloader.getImpl().bindService();
+                registerServiceConnectionListener(activityWeakReference);
+            }
+        }
+
+        public void onDestroy() {
+            unregisterServiceConnectionListener();
             releaseTask();
         }
 
@@ -477,7 +505,7 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
             return modelList.get(position);
         }
 
-        public TasksManagerModel getbyId(final int id) {
+        public TasksManagerModel getById(final int id) {
             for (TasksManagerModel model : modelList) {
                 if (model.getId() == id) {
                     return model;
@@ -492,27 +520,12 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
          * @return has already downloaded
          * @see FileDownloadStatus
          */
-        public boolean isDownloaded( final int status) {
+        public boolean isDownloaded(final int status) {
             return status == FileDownloadStatus.completed;
         }
 
-        public boolean isDownloading(final int status) {
-            switch (status) {
-                case FileDownloadStatus.pending:
-                case FileDownloadStatus.connected:
-                case FileDownloadStatus.progress:
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        public boolean isExist(final int id) {
-            return new File(getbyId(id).getPath()).exists();
-        }
-
-        public int getStatus(final int id) {
-            return FileDownloader.getImpl().getStatus(id);
+        public int getStatus(final int id, String path) {
+            return FileDownloader.getImpl().getStatus(id, path);
         }
 
         public long getTotal(final int id) {
@@ -537,11 +550,16 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
             }
 
             final int id = FileDownloadUtils.generateId(url, path);
-            TasksManagerModel model = getbyId(id);
+            TasksManagerModel model = getById(id);
             if (model != null) {
                 return model;
             }
-            return dbController.addTask(url, path);
+            final TasksManagerModel newModel = dbController.addTask(url, path);
+            if (newModel != null) {
+                modelList.add(newModel);
+            }
+
+            return newModel;
         }
 
         public String createPath(final String url) {
@@ -568,14 +586,18 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
 
             final List<TasksManagerModel> list = new ArrayList<>();
             try {
-                while (c.moveToNext()) {
+                if (!c.moveToLast()) {
+                    return list;
+                }
+
+                do {
                     TasksManagerModel model = new TasksManagerModel();
                     model.setId(c.getInt(c.getColumnIndex(TasksManagerModel.ID)));
                     model.setName(c.getString(c.getColumnIndex(TasksManagerModel.NAME)));
                     model.setUrl(c.getString(c.getColumnIndex(TasksManagerModel.URL)));
                     model.setPath(c.getString(c.getColumnIndex(TasksManagerModel.PATH)));
                     list.add(model);
-                }
+                } while (c.moveToPrevious());
             } finally {
                 if (c != null) {
                     c.close();
@@ -609,7 +631,7 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
     // ----------------------- model
     private static class TasksManagerDBOpenHelper extends SQLiteOpenHelper {
         public final static String DATABASE_NAME = "tasksmanager.db";
-        public final static int DATABASE_VERSION = 1;
+        public final static int DATABASE_VERSION = 2;
 
         public TasksManagerDBOpenHelper(Context context) {
             super(context, DATABASE_NAME, null, DATABASE_VERSION);
@@ -637,7 +659,9 @@ public class TasksManagerDemoActivity extends AppCompatActivity {
 
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-
+            if (oldVersion == 1 && newVersion == 2) {
+                db.delete(TasksManagerDBController.TABLE_NAME, null, null);
+            }
         }
     }
 

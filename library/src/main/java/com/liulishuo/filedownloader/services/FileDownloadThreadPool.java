@@ -18,27 +18,73 @@ package com.liulishuo.filedownloader.services;
 
 import android.util.SparseArray;
 
+import com.liulishuo.filedownloader.util.FileDownloadExecutors;
+import com.liulishuo.filedownloader.util.FileDownloadLog;
+import com.liulishuo.filedownloader.util.FileDownloadProperties;
+
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+
+import cn.dreamtobe.threadpool.IExecutor;
+import cn.dreamtobe.threadpool.ThreadExecutor;
 
 /**
- * Created by Jacksgong on 9/25/15.
+ * The thread pool for driving the downloading runnable, which real access the network.
  */
 class FileDownloadThreadPool {
 
     private SparseArray<FileDownloadRunnable> runnablePool = new SparseArray<>();
 
-    // TODO 对用户开放线程池大小，全局并行下载数
-    private final ExecutorService threadPool = Executors.newFixedThreadPool(3);
+    private IExecutor mThreadPool;
+
+    private final String THREAD_PREFIX = "Network";
+    private int mMaxThreadCount;
+
+    FileDownloadThreadPool(int maxNetworkThreadCount) {
+        if (maxNetworkThreadCount == 0) {
+            maxNetworkThreadCount = FileDownloadProperties.getImpl().DOWNLOAD_MAX_NETWORK_THREAD_COUNT;
+        } else {
+            maxNetworkThreadCount = FileDownloadProperties.
+                    getValidNetworkThreadCount(maxNetworkThreadCount);
+        }
+
+        mThreadPool = FileDownloadExecutors.newDefaultThreadPool(maxNetworkThreadCount, THREAD_PREFIX);
+        mMaxThreadCount = maxNetworkThreadCount;
+    }
+
+    public synchronized boolean setMaxNetworkThreadCount(int count) {
+        if (exactSize() > 0) {
+            FileDownloadLog.w(this, "Can't change the max network thread count, because the " +
+                    " network thread pool isn't in IDLE, please try again after all running" +
+                    " tasks are completed or invoking FileDownloader#pauseAll directly.");
+            return false;
+        }
+
+        final int validCount = FileDownloadProperties.getValidNetworkThreadCount(count);
+
+        if (FileDownloadLog.NEED_LOG) {
+            FileDownloadLog.d(this, "change the max network thread count, from %d to %d",
+                    mMaxThreadCount, validCount);
+        }
+
+        final List<Runnable> taskQueue = new ThreadExecutor.Exposed(mThreadPool).shutdownNow();
+        mThreadPool = FileDownloadExecutors.newDefaultThreadPool(validCount, THREAD_PREFIX);
+
+        if (taskQueue.size() > 0) {
+            FileDownloadLog.w(this, "recreate the network thread pool and discard %d tasks",
+                    taskQueue.size());
+        }
+
+        mMaxThreadCount = validCount;
+        return true;
+    }
 
     public void execute(FileDownloadRunnable runnable) {
-        runnable.onResume();
-        threadPool.execute(runnable);
-        synchronized (this){
+        runnable.onPending();
+        synchronized (this) {
             runnablePool.put(runnable.getId(), runnable);
         }
+        mThreadPool.execute("Download-" + runnable.getId(), runnable);
 
         final int CHECK_THRESHOLD_VALUE = 600;
         if (mIgnoreCheckTimes >= CHECK_THRESHOLD_VALUE) {
@@ -46,6 +92,23 @@ class FileDownloadThreadPool {
             mIgnoreCheckTimes = 0;
         } else {
             mIgnoreCheckTimes++;
+        }
+    }
+
+    public void cancel(final int id) {
+        checkNoExist();
+        synchronized (this) {
+            FileDownloadRunnable r = runnablePool.get(id);
+            if (r != null) {
+                r.cancelRunnable();
+                boolean result = mThreadPool.remove(r);
+                if (FileDownloadLog.NEED_LOG) {
+                    // If {@code result} is false, must be: the Runnable has been running before
+                    // invoke this method.
+                    FileDownloadLog.d(this, "successful cancel %d %B", id, result);
+                }
+            }
+            runnablePool.remove(id);
         }
     }
 
@@ -70,7 +133,7 @@ class FileDownloadThreadPool {
         return runnable != null && runnable.isExist();
     }
 
-    public synchronized int exactSize(){
+    public synchronized int exactSize() {
         checkNoExist();
         return runnablePool.size();
     }

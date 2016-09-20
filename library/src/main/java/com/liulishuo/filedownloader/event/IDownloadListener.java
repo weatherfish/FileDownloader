@@ -17,7 +17,10 @@
 package com.liulishuo.filedownloader.event;
 
 /**
- * Created by Jacksgong on 15/6/23.
+ * The listener is used to listen the publish event from Event Pool.
+ *
+ * @see IDownloadEvent
+ * @see IDownloadEventPool
  */
 public abstract class IDownloadListener {
 

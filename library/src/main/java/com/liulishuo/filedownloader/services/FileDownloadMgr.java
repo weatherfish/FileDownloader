@@ -17,13 +17,11 @@
 package com.liulishuo.filedownloader.services;
 
 
-import android.text.TextUtils;
-
-import com.liulishuo.filedownloader.event.DownloadTransferEvent;
+import com.liulishuo.filedownloader.IThreadPoolMonitor;
 import com.liulishuo.filedownloader.model.FileDownloadHeader;
 import com.liulishuo.filedownloader.model.FileDownloadModel;
 import com.liulishuo.filedownloader.model.FileDownloadStatus;
-import com.liulishuo.filedownloader.model.FileDownloadTransferModel;
+import com.liulishuo.filedownloader.util.FileDownloadHelper;
 import com.liulishuo.filedownloader.util.FileDownloadLog;
 import com.liulishuo.filedownloader.util.FileDownloadUtils;
 
@@ -33,17 +31,41 @@ import java.util.List;
 import okhttp3.OkHttpClient;
 
 /**
- * Created by Jacksgong on 9/24/15.
+ * The downloading manager in FileDownloadService, which is used to control all download-inflow.
+ * <p/>
+ * Handling real {@link #start(String, String, boolean, int, int, int, boolean, FileDownloadHeader,
+ * boolean)}.
+ *
+ * @see FileDownloadThreadPool
+ * @see FileDownloadRunnable
  */
-class FileDownloadMgr {
+class FileDownloadMgr implements IThreadPoolMonitor {
     private final IFileDownloadDBHelper mHelper;
 
     private OkHttpClient client = null;
 
-    private final FileDownloadThreadPool mThreadPool = new FileDownloadThreadPool();
+    private final FileDownloadThreadPool mThreadPool;
 
-    public FileDownloadMgr(final OkHttpClient client) {
+    public FileDownloadMgr() {
+
+        final DownloadMgrInitialParams params = FileDownloadHelper.getDownloadMgrInitialParams();
         mHelper = new FileDownloadDBHelper();
+
+        final OkHttpClient client;
+        final int maxNetworkThreadCount;
+        if (params != null) {
+            client = params.makeCustomOkHttpClient();
+            maxNetworkThreadCount = params.getMaxNetworkThreadCount();
+        } else {
+            client = null;
+            maxNetworkThreadCount = 0;
+        }
+
+        if (FileDownloadLog.NEED_LOG) {
+            FileDownloadLog.d(this, "init the download manager with initialParams: " +
+                            "okhttpClient[is customize: %B], maxNetworkThreadCount[%d]",
+                    client != null, maxNetworkThreadCount);
+        }
 
         // init client
         if (this.client != client) {
@@ -52,46 +74,73 @@ class FileDownloadMgr {
             // in this case, the client must be null, see #41
             this.client = new OkHttpClient();
         }
+
+        mThreadPool = new FileDownloadThreadPool(maxNetworkThreadCount);
     }
 
-
     // synchronize for safe: check downloading, check resume, update data, execute runnable
-    public synchronized void start(final String url, final String path, final int callbackProgressTimes,
-                                   final int autoRetryTimes, final FileDownloadHeader header) {
-        final int id = FileDownloadUtils.generateId(url, path);
+    public synchronized void start(final String url, final String path, final boolean pathAsDirectory,
+                                   final int callbackProgressTimes,
+                                   final int callbackProgressMinIntervalMillis,
+                                   final int autoRetryTimes, final boolean forceReDownload,
+                                   final FileDownloadHeader header, final boolean isWifiRequired) {
+        final int id = FileDownloadUtils.generateId(url, path, pathAsDirectory);
+        FileDownloadModel model = mHelper.find(id);
 
-        // check is already in download pool
-        if (checkDownloading(url, path)) {
+        if (!pathAsDirectory && model == null) {
+            // try dir data.
+            final int dirCaseId = FileDownloadUtils.generateId(url, FileDownloadUtils.getParent(path),
+                    true);
+            model = mHelper.find(dirCaseId);
+            if (model != null && path.equals(model.getTargetFilePath())) {
+                if (FileDownloadLog.NEED_LOG) {
+                    FileDownloadLog.d(this, "task[%d] find model by dirCaseId[%d]", id, dirCaseId);
+                }
+            }
+        }
+
+        if (FileDownloadHelper.inspectAndInflowDownloading(id, model, this, true)) {
             if (FileDownloadLog.NEED_LOG) {
                 FileDownloadLog.d(this, "has already started download %d", id);
             }
-            // warn
-            final FileDownloadTransferModel warnModel = new FileDownloadTransferModel();
-            warnModel.setDownloadId(id);
-            warnModel.setStatus(FileDownloadStatus.warn);
+            return;
+        }
 
-            FileDownloadProcessEventPool.getImpl()
-                    .publish(new DownloadTransferEvent(warnModel));
+        final String targetFilePath = model != null ? model.getTargetFilePath() :
+                FileDownloadUtils.getTargetFilePath(path, pathAsDirectory, null);
+
+        if (FileDownloadHelper.inspectAndInflowDownloaded(id, targetFilePath, forceReDownload,
+                true)) {
+            if (FileDownloadLog.NEED_LOG) {
+                FileDownloadLog.d(this, "has already completed downloading %d", id);
+            }
             return;
         }
 
         // real start
-
         // - create model
-        FileDownloadModel model = mHelper.find(id);
         boolean needUpdate2DB;
         if (model != null &&
                 (model.getStatus() == FileDownloadStatus.paused ||
                         model.getStatus() == FileDownloadStatus.error) // FileDownloadRunnable invoke
-            // #checkBreakpointAvailable  to determine whether it is really invalid.
+            // #isBreakpointAvailable to determine whether it is really invalid.
                 ) {
-            needUpdate2DB = false;
+            if (model.getId() != id) {
+                // in try dir case.
+                mHelper.remove(model.getId());
+                model.setId(id);
+                model.setPath(path, pathAsDirectory);
+
+                needUpdate2DB = true;
+            } else {
+                needUpdate2DB = false;
+            }
         } else {
             if (model == null) {
                 model = new FileDownloadModel();
             }
             model.setUrl(url);
-            model.setPath(path);
+            model.setPath(path, pathAsDirectory);
 
             model.setId(id);
             model.setSoFar(0);
@@ -100,190 +149,97 @@ class FileDownloadMgr {
             needUpdate2DB = true;
         }
 
-        model.setCallbackProgressTimes(callbackProgressTimes);
-        model.setIsCancel(false);
-
         // - update model to db
         if (needUpdate2DB) {
             mHelper.update(model);
         }
 
         // - execute
-        mThreadPool.execute(new FileDownloadRunnable(client, model, mHelper, autoRetryTimes, header));
+        mThreadPool.execute(new FileDownloadRunnable(client, this, model, mHelper, autoRetryTimes, header,
+                callbackProgressMinIntervalMillis, callbackProgressTimes, forceReDownload, isWifiRequired));
 
     }
 
-    public boolean checkDownloading(String url, String path) {
-        final int downloadId = FileDownloadUtils.generateId(url, path);
-        final FileDownloadModel model = mHelper.find(downloadId);
-        final boolean isInPool = mThreadPool.isInThreadPool(downloadId);
+    public boolean isDownloading(String url, String path) {
+        return isDownloading(FileDownloadUtils.generateId(url, path));
+    }
 
-        boolean isDownloading;
-        do {
-            if (model == null ||
-                    (model.getStatus() != FileDownloadStatus.pending && model.getStatus() != FileDownloadStatus.progress)
-                    ) {
-
-                if (isInPool) {
-                    // status 不是pending/processing & 线程池有，只有可能是线程同步问题，status已经设置为complete/error/pause但是线程还没有执行完
-                    // TODO 这里需要特殊处理，小概率事件，需要对同一DownloadId的Runnable与该方法同步
-                    isDownloading = true;
-                } else {
-                    // status 不是pending/processing & 线程池没有，直接返回不在下载中
-                    isDownloading = false;
-
-                }
-            } else {
-                //model != null && status 为pending/progress其中一个
-                if (isInPool) {
-                    // status 是pending/processing & 线程池有，直接返回正在下载中
-                    isDownloading = true;
-                } else {
-                    // status 是pending/processing & 线程池没有，只有可能异常状态，打e级log，直接放回不在下载中
-                    FileDownloadLog.e(this, "status is[%s] & thread is not has %d", model.getStatus(), downloadId);
-                    isDownloading = false;
-
-                }
-            }
-        } while (false);
-
-        return isDownloading;
-
+    public boolean isDownloading(int id) {
+        return isDownloading(mHelper.find(id));
     }
 
     /**
      * @return can resume by break point
      */
-    public static boolean checkBreakpointAvailable(final int downloadId, final FileDownloadModel model) {
+    public static boolean isBreakpointAvailable(final int id, final FileDownloadModel model) {
+        if (model == null) {
+            if (FileDownloadLog.NEED_LOG) {
+                FileDownloadLog.d(FileDownloadMgr.class, "can't continue %d model == null", id);
+            }
+            return false;
+        }
+
+        if (model.getTempFilePath() == null) {
+            if (FileDownloadLog.NEED_LOG) {
+                FileDownloadLog.d(FileDownloadMgr.class, "can't continue %d temp path == null", id);
+            }
+            return false;
+        }
+
+        return isBreakpointAvailable(id, model, model.getTempFilePath());
+    }
+
+    public static boolean isBreakpointAvailable(final int id, final FileDownloadModel model,
+                                                final String path) {
         boolean result = false;
 
         do {
-            if (model == null) {
+            if (path == null) {
                 if (FileDownloadLog.NEED_LOG) {
-                    FileDownloadLog.d(FileDownloadMgr.class, "can't continue %d model == null", downloadId);
+                    FileDownloadLog.d(FileDownloadMgr.class, "can't continue %d path = null", id);
                 }
                 break;
             }
 
-            if (model.getStatus() != FileDownloadStatus.paused
-                    && model.getStatus() != FileDownloadStatus.retry
-                    && model.getStatus() != FileDownloadStatus.pending // may pending in case of enqueue
-                    ) {
-                if (FileDownloadLog.NEED_LOG) {
-                    FileDownloadLog.d(FileDownloadMgr.class, "can't continue %d status[%d] isn't paused",
-                            downloadId, model.getStatus());
-                }
-                break;
-            }
-
-            if (TextUtils.isEmpty(model.getETag())) {
-                if (FileDownloadLog.NEED_LOG) {
-                    FileDownloadLog.d(FileDownloadMgr.class, "can't continue %d etag is empty", downloadId);
-                }
-                break;
-            }
-
-
-            File file = new File(model.getPath());
+            File file = new File(path);
             final boolean isExists = file.exists();
             final boolean isDirectory = file.isDirectory();
 
             if (!isExists || isDirectory) {
                 if (FileDownloadLog.NEED_LOG) {
                     FileDownloadLog.d(FileDownloadMgr.class, "can't continue %d file not suit, exists[%B], directory[%B]",
-                            downloadId, isExists, isDirectory);
+                            id, isExists, isDirectory);
                 }
                 break;
             }
 
             final long fileLength = file.length();
 
-            if (fileLength < model.getSoFar()
-                    || (model.getTotal() != -1  // not chunk transfer encoding data
-                    && fileLength >= model.getTotal())) {
-                // 脏数据
+            if (model.getSoFar() == 0) {
                 if (FileDownloadLog.NEED_LOG) {
-                    FileDownloadLog.d(FileDownloadMgr.class, "can't continue %d dirty data fileLength[%d] sofar[%d] total[%d]",
-                            downloadId, fileLength, model.getSoFar(), model.getTotal());
-                }
-                break;
-
-            }
-
-            result = true;
-        } while (false);
-
-
-        return result;
-    }
-
-    public FileDownloadTransferModel checkReuse(final int downloadId) {
-        FileDownloadTransferModel transferModel = null;
-
-        final FileDownloadModel model = mHelper.find(downloadId);
-        final boolean canReuse = checkReuse(downloadId, model);
-        if (canReuse) {
-            transferModel = new FileDownloadTransferModel(model);
-            transferModel.setUseOldFile(true);
-        }
-
-        return transferModel;
-    }
-
-    /**
-     * @return Already succeed & exists
-     */
-    public static boolean checkReuse(final int downloadId, final FileDownloadModel model) {
-        boolean result = false;
-        // 这个方法判断应该在checkDownloading之后，如果在下载中，那么这些判断都将产生错误。
-        // 存在小概率事件，有可能，此方法判断过程中，刚好下载完成, 这里需要对同一DownloadId的Runnable与该方法同步
-        do {
-            if (model == null) {
-                // 数据不存在
-                if (FileDownloadLog.NEED_LOG) {
-                    FileDownloadLog.d(FileDownloadMgr.class, "can't reuse %d model not exist", downloadId);
+                    FileDownloadLog.d(FileDownloadMgr.class, "can't continue %d the downloaded-record is zero.",
+                            id);
                 }
                 break;
             }
 
-            if (model.getStatus() != FileDownloadStatus.completed) {
-                // 数据状态没完成
+            if (fileLength < model.getSoFar() ||
+                    (model.getTotal() != -1  // not chunk transfer encoding data
+                            &&
+                            (fileLength > model.getTotal() || model.getSoFar() >= model.getTotal()))
+                    ) {
+                // dirty data.
                 if (FileDownloadLog.NEED_LOG) {
-                    FileDownloadLog.d(FileDownloadMgr.class, "can't reuse %d status not completed %s",
-                            downloadId, model.getStatus());
-                }
-                break;
-            }
-
-            final File file = new File(model.getPath());
-            if (!file.exists() || !file.isFile()) {
-                // 文件不存在
-                if (FileDownloadLog.NEED_LOG) {
-                    FileDownloadLog.d(FileDownloadMgr.class, "can't reuse %d file not exists", downloadId);
-                }
-                break;
-            }
-
-            if (model.getSoFar() != model.getTotal()) {
-                // 脏数据
-                if (FileDownloadLog.NEED_LOG) {
-                    FileDownloadLog.d(FileDownloadMgr.class, "can't reuse %d soFar[%d] not equal total[%d] %d",
-                            downloadId, model.getSoFar(), model.getTotal());
-                }
-                break;
-            }
-
-            if (file.length() != model.getTotal()) {
-                // 无效文件
-                if (FileDownloadLog.NEED_LOG) {
-                    FileDownloadLog.d(FileDownloadMgr.class, "can't reuse %d file length[%d] not equal total[%d]",
-                            downloadId, file.length(), model.getTotal());
+                    FileDownloadLog.d(FileDownloadMgr.class, "can't continue %d dirty data" +
+                                    " fileLength[%d] sofar[%d] total[%d]",
+                            id, fileLength, model.getSoFar(), model.getTotal());
                 }
                 break;
             }
 
             result = true;
         } while (false);
+
 
         return result;
     }
@@ -297,7 +253,8 @@ class FileDownloadMgr {
         if (FileDownloadLog.NEED_LOG) {
             FileDownloadLog.d(this, "paused %d", id);
         }
-        model.setIsCancel(true);
+
+        mThreadPool.cancel(id);
         /**
          * 耦合 by {@link FileDownloadRunnable#run()} 中的 {@link com.squareup.okhttp.Request.Builder#tag(Object)}
          * 目前在okHttp里还是每个单独任务
@@ -340,7 +297,7 @@ class FileDownloadMgr {
         return model.getTotal();
     }
 
-    public int getStatus(final int id) {
+    public byte getStatus(final int id) {
         final FileDownloadModel model = mHelper.find(id);
         if (model == null) {
             return FileDownloadStatus.INVALID_STATUS;
@@ -351,6 +308,68 @@ class FileDownloadMgr {
 
     public boolean isIdle() {
         return mThreadPool.exactSize() <= 0;
+    }
+
+    public synchronized boolean setMaxNetworkThreadCount(int count) {
+        return mThreadPool.setMaxNetworkThreadCount(count);
+    }
+
+    @Override
+    public boolean isDownloading(FileDownloadModel model) {
+        if (model == null) {
+            return false;
+        }
+
+        final boolean isInPool = mThreadPool.isInThreadPool(model.getId());
+        boolean isDownloading;
+
+        do {
+            if (FileDownloadStatus.isOver(model.getStatus())) {
+
+                //noinspection RedundantIfStatement
+                if (isInPool) {
+                    // already finished, but still in the pool.
+                    // handle as downloading.
+                    isDownloading = true;
+                } else {
+                    // already finished, and not in the pool.
+                    // make sense.
+                    isDownloading = false;
+
+                }
+            } else {
+                if (isInPool) {
+                    // not finish, in the pool.
+                    // make sense.
+                    isDownloading = true;
+                } else {
+                    // not finish, but not in the pool.
+                    // beyond expectation.
+                    FileDownloadLog.e(this, "%d status is[%s](not finish) & but not in the pool",
+                            model.getId(), model.getStatus());
+                    // handle as not in downloading, going to re-downloading.
+                    isDownloading = false;
+
+                }
+            }
+        } while (false);
+
+        return isDownloading;
+    }
+
+    public boolean clearTaskData(int id) {
+        if (id == 0) {
+            FileDownloadLog.w(this, "The task[%d] id is invalid, can't clear it.", id);
+            return false;
+        }
+
+        if (isDownloading(id)) {
+            FileDownloadLog.w(this, "The task[%d] is downloading, can't clear it.", id);
+            return false;
+        }
+
+        mHelper.remove(id);
+        return true;
     }
 }
 
