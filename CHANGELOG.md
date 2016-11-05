@@ -2,6 +2,76 @@
 
 > [中文迭代日志](https://github.com/lingochamp/FileDownloader/blob/master/CHANGELOG-ZH.md)
 
+## Version 1.3.0
+
+_2016-10-31_
+
+#### New Interfaces
+
+- Add `FileDownloadSerialQueue`: Easy to dynamically manage tasks and tasks in the queue will automatically start download one by one. Closes #345.
+- Remove the `callback` method in the `FileDownloadListener` class, besides adding the `FileDownloadListener#isInvalid` method to tell the FileDownloader whether the listener has already invalidated, which means it can't receive any messages.
+- Add `FileDownloader#clearAllTaskData`: Clear all data in the `filedownloader` database. Closes #361
+
+#### Enhancement
+
+- Improve Practicability(`FileDownloadListener#blackCompleted`): Ensure the `blockCompleted` callback method can accept any `Exception`. Closes #369.
+- Improve Practicability(service-not-connected): Print the tips with the cause in service-not-connected-helper, in this way, when you invoke some methods need the FileDownload service has already connected but not yet, FileDownloader will not only print causes in the `Logcat` but also print the tips.
+
+#### Fix
+
+- Fix(reuse): fix `BaseDownloadTask#reuse` is called shortly after the call to `BaseDownloadTask#pause` may raise an exception. Closes #329.
+
+## Version 1.2.2
+
+_2016-10-15_
+
+#### Fix
+
+- Fix(fatal-crash): fix when the task doesn't have `FileDownloadListener`, we can't receive the callback of `FileDownloadMonitor.IMonitor#onTaskOver` for it. Closes #348.
+
+## Version 1.2.1
+
+_2016-10-09_
+
+#### Fix
+
+- <s>Fix(fatal-crash): fix when the task doesn't have `FileDownloadListener`, we can't receive the callback of `FileDownloadMonitor.IMonitor#onTaskOver` for it. Closes #348. </s> Sorry for my mistake, this bug is still exist in 1.2.1 and finally fixed in 1.2.2.
+
+## Version 1.2.0
+
+_2016-10-04_
+
+#### New Interfaces
+
+- Add `FileDownloader#insureServiceBind()`: Easy to block the current thread, and start FileDownloader service, after the service started then executes the request which needs the service alive. Refs #324.
+- Add `FileDownloader#insureServiceBindAsync()`: Easy to start FileDownloader service, and after the service started then executes the request which needs the service alive. Refs #324.
+- Add `FileDownloader#bindService(runnable:Runnable)`: Easy to start FileDownloader service, and after the service started then executes the `runnable`. Refs #324.
+- Add `FileDownloader#init(Context,InitCustomMaker)`: Easy to initialize the FileDownloader engine with various kinds of customized components.
+
+#### Enhancement
+
+- Improve Practicability(`InitCustomMaker#database`): Support customize the database component with the implementation of `FileDownloadDatabase`, and implements the default database component: `DefaultDatabaseImpl`.
+- Improve Practicability(`InitCustomMaker#outputStreamCreator`): Support customize the output stream with the implementation of `FileDownloadOutputStream`, and implements the default output stream component `FileDownloadRandomAccessFile`, and some alternative components: `FileDownloadBufferedOutputStream`、`FileDownloadOkio`.
+
+## Version 1.1.5
+
+_2016-09-29_
+
+#### New Interfaces
+
+- Support the configuration `file.non-pre-allocation` in `filedownloader.properties`: Whether doesn't need to pre-allocates the 'content-length' space when to start downloading, default is `false`. Closes #313 .
+
+#### Fix
+
+- Fix(fatal-crash): fix occur the `StackOverflowError` when thread pool getActiveCount is not right because of it just an approximate number. Closes #321 .
+- Fix(minor-crash): fix in some minor cases occur `IllegalStateException` which message is 'No reused downloaded file in this message'. Closes #316 .
+- Fix(minor-crash): fix when there are several serial-queues started in case of the FileDownloader service doesn't connect yet and in minor cases that the same task in the queue will be started twice which lead to crash. Refs #282 .
+
+#### Others
+
+- Dependency: Cancel the dependence of thread-pool library. Refs #321 .
+- MinSDKVersion: Upgrade `minSdkVersion` : 8->9. Refs #321 .
+
 ## Version 1.1.0
 
 _2016-09-13_

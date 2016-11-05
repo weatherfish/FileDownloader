@@ -17,10 +17,10 @@
 package com.liulishuo.filedownloader;
 
 import com.liulishuo.filedownloader.message.MessageSnapshot;
-import com.liulishuo.filedownloader.model.FileDownloadHeader;
+import com.liulishuo.filedownloader.model.FileDownloadModel;
 import com.liulishuo.filedownloader.services.FileDownloadRunnable;
-
-import java.io.FileDescriptor;
+import com.liulishuo.filedownloader.stream.FileDownloadOutputStream;
+import com.liulishuo.filedownloader.util.FileDownloadHelper;
 
 /**
  * @see com.liulishuo.filedownloader.model.FileDownloadStatus
@@ -68,7 +68,7 @@ interface IFileDownloadMessenger {
      * <p/>
      * Fetching datum, and write to local disk.
      *
-     * @see FileDownloadRunnable#onProgress(long, long, FileDescriptor)
+     * @see FileDownloadRunnable#onProgress(long, long, FileDownloadOutputStream)
      */
     void notifyProgress(MessageSnapshot snapshot);
 
@@ -95,8 +95,7 @@ interface IFileDownloadMessenger {
      * There has already had some same Tasks(Same-URL & Same-SavePath) in Pending-Queue or is
      * running.
      *
-     * @see com.liulishuo.filedownloader.services.FileDownloadMgr#start(String, String, boolean, int, int, int, boolean, FileDownloadHeader)
-     * @see com.liulishuo.filedownloader.services.FileDownloadMgr#isDownloading(String, String)
+     * @see FileDownloadHelper#inspectAndInflowDownloading(int, FileDownloadModel, IThreadPoolMonitor, boolean)
      */
     void notifyWarn(MessageSnapshot snapshot);
 
@@ -143,12 +142,6 @@ interface IFileDownloadMessenger {
     boolean handoverDirectly();
 
     /**
-     * @return {@code true} if has receiver(or listener) to receiver messages.
-     * @see BaseDownloadTask#getListener()
-     */
-    boolean hasReceiver();
-
-    /**
      * @param task Re-appointment for this task, when this messenger has already accomplished the
      *             old one.
      */
@@ -162,4 +155,12 @@ interface IFileDownloadMessenger {
      * {@link com.liulishuo.filedownloader.model.FileDownloadStatus#blockComplete}.
      */
     boolean isBlockingCompleted();
+
+    /**
+     * Discard this messenger.
+     * <p>
+     * If this messenger is discarded, all messages sent by this messenger or feature messages
+     * handled by this messenger will be discard, no longer callback to the target Listener.
+     */
+    void discard();
 }

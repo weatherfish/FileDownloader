@@ -21,12 +21,10 @@ import android.os.Looper;
 import android.os.Message;
 
 import com.liulishuo.filedownloader.util.FileDownloadExecutors;
-import com.liulishuo.filedownloader.util.FileDownloadLog;
 
 import java.util.ArrayList;
+import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
-
-import cn.dreamtobe.threadpool.IExecutor;
 
 /**
  * The message station to transfer task events to {@link FileDownloadListener}.
@@ -34,7 +32,7 @@ import cn.dreamtobe.threadpool.IExecutor;
 @SuppressWarnings("WeakerAccess")
 public class FileDownloadMessageStation {
 
-    private final IExecutor blockCompletedPool = FileDownloadExecutors.
+    private final Executor blockCompletedPool = FileDownloadExecutors.
             newDefaultThreadPool(5, "BlockCompleted");
 
     private final Handler handler;
@@ -59,14 +57,6 @@ public class FileDownloadMessageStation {
 
     void requestEnqueue(final IFileDownloadMessenger messenger,
                         @SuppressWarnings("SameParameterValue") boolean immediately) {
-        /** @see #notify(FileDownloadEvent) **/
-        if (!messenger.hasReceiver()) {
-            if (FileDownloadLog.NEED_LOG) {
-                FileDownloadLog.d(this, "can't handover the message[%s], " +
-                        "no listener be found in task to receive.", messenger);
-            }
-            return;
-        }
 
         if (messenger.handoverDirectly()) {
             messenger.handoverMessage();
@@ -74,7 +64,7 @@ public class FileDownloadMessageStation {
         }
 
         if (messenger.isBlockingCompleted()) {
-            blockCompletedPool.execute("Handover", new Runnable() {
+            blockCompletedPool.execute(new Runnable() {
                 @Override
                 public void run() {
                     messenger.handoverMessage();

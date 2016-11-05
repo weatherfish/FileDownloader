@@ -17,7 +17,6 @@
 package com.liulishuo.filedownloader;
 
 import com.liulishuo.filedownloader.message.BlockCompleteMessage;
-import com.liulishuo.filedownloader.message.FileDownloadMessage;
 import com.liulishuo.filedownloader.message.MessageSnapshot;
 import com.liulishuo.filedownloader.model.FileDownloadStatus;
 import com.liulishuo.filedownloader.util.FileDownloadLog;
@@ -38,7 +37,9 @@ class FileDownloadMessenger implements IFileDownloadMessenger {
     private BaseDownloadTask.IRunningTask mTask;
     private BaseDownloadTask.LifeCycleCallback mLifeCycleCallback;
 
-    private Queue<FileDownloadMessage> parcelQueue;
+    private Queue<MessageSnapshot> parcelQueue;
+
+    private boolean mIsDiscard = false;
 
     FileDownloadMessenger(final BaseDownloadTask.IRunningTask task,
                           final BaseDownloadTask.LifeCycleCallback callback) {
@@ -194,10 +195,20 @@ class FileDownloadMessenger implements IFileDownloadMessenger {
     }
 
     private void process(MessageSnapshot snapshot) {
-        offer(snapshot);
+        if (mIsDiscard || mTask.getOrigin().getListener() == null) {
+            if (FileDownloadMonitor.isValid() &&
+                    snapshot.getStatus() == FileDownloadStatus.blockComplete) {
+                // there is a FileDownloadMonitor, so we have to ensure the 'BaseDownloadTask#over'
+                // can be invoked.
+                mLifeCycleCallback.onOver();
+            }
 
-        FileDownloadMessageStation.getImpl().requestEnqueue(this);
+            inspectAndHandleOverStatus(snapshot.getStatus());
+        } else {
+            offer(snapshot);
 
+            FileDownloadMessageStation.getImpl().requestEnqueue(this);
+        }
     }
 
     private void offer(MessageSnapshot snapshot) {
@@ -206,27 +217,12 @@ class FileDownloadMessenger implements IFileDownloadMessenger {
                 FileDownloadUtils.formatString("request process message %d, but has already over %d",
                         status, parcelQueue.size()), mTask != null);
 
-        parcelQueue.offer(new FileDownloadMessage(mTask.getOrigin(), snapshot));
+        parcelQueue.offer(snapshot);
     }
 
-    @Override
-    public void handoverMessage() {
-        final FileDownloadMessage message = parcelQueue.poll();
-        final int currentStatus = message.getSnapshot().getStatus();
-
-        Assert.assertTrue(
-                FileDownloadUtils.formatString(
-                        "can't handover the message, no master to receive this " +
-                                "message(status[%d]) size[%d]",
-                        currentStatus, parcelQueue.size()),
-                mTask != null);
-        final BaseDownloadTask originTask = mTask.getOrigin();
-
-        final FileDownloadListener listener = originTask.getListener();
-        final ITaskHunter.IMessageHandler messageHandler = mTask.getMessageHandler();
-
+    private void inspectAndHandleOverStatus(int status) {
         // If this task is in the over state, try to retire this messenger.
-        if (FileDownloadStatus.isOver(currentStatus)) {
+        if (FileDownloadStatus.isOver(status)) {
             if (!parcelQueue.isEmpty()) {
                 throw new IllegalStateException(
                         FileDownloadUtils.formatString("the messenger[%s] has already " +
@@ -236,23 +232,129 @@ class FileDownloadMessenger implements IFileDownloadMessenger {
             }
             mTask = null;
         }
+    }
 
-        if (listener == null) {
-            FileDownloadLog.w(this, "The task[%d] can't receive the message(status: [%d])," +
-                            " its download listener might be removed when it is running in" +
-                            " FileDownloader",
-                    originTask.getId(), currentStatus);
+    @Override
+    public void handoverMessage() {
+        if (mIsDiscard) {
+            return;
+        }
+
+        final MessageSnapshot message = parcelQueue.poll();
+        final int currentStatus = message.getStatus();
+        final BaseDownloadTask.IRunningTask task = mTask;
+
+        Assert.assertTrue(
+                FileDownloadUtils.formatString(
+                        "can't handover the message, no master to receive this " +
+                                "message(status[%d]) size[%d]",
+                        currentStatus, parcelQueue.size()),
+                task != null);
+        final BaseDownloadTask originTask = task.getOrigin();
+
+        final FileDownloadListener listener = originTask.getListener();
+        final ITaskHunter.IMessageHandler messageHandler = task.getMessageHandler();
+
+        inspectAndHandleOverStatus(currentStatus);
+
+        if (listener == null || listener.isInvalid()) {
+            return;
+        }
+
+        if (currentStatus == FileDownloadStatus.blockComplete) {
+            try {
+                listener.blockComplete(originTask);
+                notifyCompleted(((BlockCompleteMessage) message).transmitToCompleted());
+            } catch (Throwable throwable) {
+                notifyError(messageHandler.prepareErrorMessage(throwable));
+            }
         } else {
-            if (currentStatus == FileDownloadStatus.blockComplete) {
-                try {
-                    listener.callback(message);
-                    notifyCompleted(((BlockCompleteMessage) message.getSnapshot()).
-                            transmitToCompleted());
-                } catch (Throwable throwable) {
-                    notifyError(messageHandler.prepareErrorMessage(throwable));
-                }
-            } else {
-                listener.callback(message);
+            FileDownloadLargeFileListener largeFileListener = null;
+            if (listener instanceof FileDownloadLargeFileListener) {
+                largeFileListener = (FileDownloadLargeFileListener) listener;
+            }
+
+            switch (currentStatus) {
+                case FileDownloadStatus.pending:
+                    if (largeFileListener != null) {
+                        largeFileListener.pending(originTask,
+                                message.getLargeSofarBytes(),
+                                message.getLargeTotalBytes());
+                    } else {
+                        listener.pending(originTask,
+                                message.getSmallSofarBytes(),
+                                message.getSmallTotalBytes());
+                    }
+
+                    break;
+                case FileDownloadStatus.started:
+                    listener.started(originTask);
+                    break;
+                case FileDownloadStatus.connected:
+                    if (largeFileListener != null) {
+                        largeFileListener.connected(originTask,
+                                message.getEtag(),
+                                message.isResuming(),
+                                originTask.getLargeFileSoFarBytes(),
+                                message.getLargeTotalBytes());
+
+                    } else {
+                        listener.connected(originTask,
+                                message.getEtag(),
+                                message.isResuming(),
+                                originTask.getSmallFileSoFarBytes(),
+                                message.getSmallTotalBytes());
+                    }
+
+                    break;
+                case FileDownloadStatus.progress:
+                    if (largeFileListener != null) {
+                        largeFileListener.progress(originTask,
+                                message.getLargeSofarBytes(),
+                                originTask.getLargeFileTotalBytes());
+
+                    } else {
+                        listener.progress(originTask,
+                                message.getSmallSofarBytes(),
+                                originTask.getSmallFileTotalBytes());
+                    }
+                    break;
+                case FileDownloadStatus.retry:
+                    if (largeFileListener != null) {
+                        largeFileListener.retry(originTask,
+                                message.getThrowable(),
+                                message.getRetryingTimes(),
+                                message.getLargeSofarBytes());
+                    } else {
+                        listener.retry(originTask,
+                                message.getThrowable(),
+                                message.getRetryingTimes(),
+                                message.getSmallSofarBytes());
+                    }
+
+                    break;
+                case FileDownloadStatus.completed:
+                    listener.completed(originTask);
+                    break;
+                case FileDownloadStatus.error:
+                    listener.error(originTask,
+                            message.getThrowable());
+                    break;
+                case FileDownloadStatus.paused:
+                    if (largeFileListener != null) {
+                        largeFileListener.paused(originTask,
+                                message.getLargeSofarBytes(),
+                                message.getLargeTotalBytes());
+                    } else {
+                        listener.paused(originTask,
+                                message.getSmallSofarBytes(),
+                                message.getSmallTotalBytes());
+                    }
+                    break;
+                case FileDownloadStatus.warn:
+                    // already same url & path in pending/running list
+                    listener.warn(originTask);
+                    break;
             }
         }
     }
@@ -260,11 +362,6 @@ class FileDownloadMessenger implements IFileDownloadMessenger {
     @Override
     public boolean handoverDirectly() {
         return mTask.getOrigin().isSyncCallback();
-    }
-
-    @Override
-    public boolean hasReceiver() {
-        return mTask.getOrigin().getListener() != null;
     }
 
     @Override
@@ -281,7 +378,12 @@ class FileDownloadMessenger implements IFileDownloadMessenger {
 
     @Override
     public boolean isBlockingCompleted() {
-        return parcelQueue.peek().getSnapshot().getStatus() == FileDownloadStatus.blockComplete;
+        return parcelQueue.peek().getStatus() == FileDownloadStatus.blockComplete;
+    }
+
+    @Override
+    public void discard() {
+        mIsDiscard = true;
     }
 
     @Override

@@ -35,7 +35,7 @@ import java.util.ArrayList;
 public class DownloadTaskHunter implements ITaskHunter, ITaskHunter.IStarter, ITaskHunter.IMessageHandler,
         BaseDownloadTask.LifeCycleCallback {
 
-    private final IFileDownloadMessenger mMessenger;
+    private IFileDownloadMessenger mMessenger;
 
     @Override
     public boolean updateKeepAhead(MessageSnapshot snapshot) {
@@ -115,28 +115,29 @@ public class DownloadTaskHunter implements ITaskHunter, ITaskHunter.IStarter, IT
 
     @Override
     public MessageSnapshot prepareErrorMessage(Throwable cause) {
-        setStatus(FileDownloadStatus.error);
+        mStatus = FileDownloadStatus.error;
         mThrowable = cause;
         return MessageSnapshotTaker.catchException(mTask.getRunningTask().getOrigin());
     }
 
     private void update(final MessageSnapshot snapshot) {
         final BaseDownloadTask task = mTask.getRunningTask().getOrigin();
+        final byte status = snapshot.getStatus();
 
-        setStatus(snapshot.getStatus());
+        this.mStatus = status;
         this.mIsLargeFile = snapshot.isLargeFile();
 
-        switch (snapshot.getStatus()) {
+        switch (status) {
             case FileDownloadStatus.pending:
                 this.mSoFarBytes = snapshot.getLargeSofarBytes();
                 this.mTotalBytes = snapshot.getLargeTotalBytes();
 
                 // notify
-                getMessenger().notifyPending(snapshot);
+                mMessenger.notifyPending(snapshot);
                 break;
             case FileDownloadStatus.started:
                 // notify
-                getMessenger().notifyStarted(snapshot);
+                mMessenger.notifyStarted(snapshot);
                 break;
             case FileDownloadStatus.connected:
                 this.mTotalBytes = snapshot.getLargeTotalBytes();
@@ -155,14 +156,14 @@ public class DownloadTaskHunter implements ITaskHunter, ITaskHunter.IStarter, IT
                 mSpeedMonitor.start();
 
                 // notify
-                getMessenger().notifyConnected(snapshot);
+                mMessenger.notifyConnected(snapshot);
                 break;
             case FileDownloadStatus.progress:
                 this.mSoFarBytes = snapshot.getLargeSofarBytes();
                 mSpeedMonitor.update(snapshot.getLargeSofarBytes());
 
                 // notify
-                getMessenger().notifyProgress(snapshot);
+                mMessenger.notifyProgress(snapshot);
                 break;
 //            case FileDownloadStatus.blockComplete:
             /**
@@ -177,7 +178,7 @@ public class DownloadTaskHunter implements ITaskHunter, ITaskHunter.IStarter, IT
                 mSpeedMonitor.reset();
 
                 // notify
-                getMessenger().notifyRetry(snapshot);
+                mMessenger.notifyRetry(snapshot);
                 break;
             case FileDownloadStatus.error:
                 this.mThrowable = snapshot.getThrowable();
@@ -233,14 +234,15 @@ public class DownloadTaskHunter implements ITaskHunter, ITaskHunter.IStarter, IT
                         // ing, has callbacks
                         // keep and wait callback
 
-                        setStatus(FileDownloadStatus.pending);
+                        this.mStatus = FileDownloadStatus.pending;
                         this.mTotalBytes = snapshot.getLargeTotalBytes();
                         this.mSoFarBytes = snapshot.getLargeSofarBytes();
 
                         mSpeedMonitor.start();
 
-                        ((MessageSnapshot.IWarnMessageSnapshot) snapshot).turnToPending();
-                        getMessenger().notifyPending(snapshot);
+                        mMessenger.
+                                notifyPending(((MessageSnapshot.IWarnMessageSnapshot) snapshot).
+                                        turnToPending());
                         break;
                     } else {
                         // already over and no callback
@@ -388,7 +390,7 @@ public class DownloadTaskHunter implements ITaskHunter, ITaskHunter.IStarter, IT
         }
         FileDownloadTaskLauncher.getImpl().expire(this);
 
-        setStatus(FileDownloadStatus.paused);
+        this.mStatus = FileDownloadStatus.paused;
 
         if (!FileDownloader.getImpl().isServiceConnected()) {
             if (FileDownloadLog.NEED_LOG) {
@@ -417,7 +419,6 @@ public class DownloadTaskHunter implements ITaskHunter, ITaskHunter.IStarter, IT
 
     @Override
     public void reset() {
-        setStatus(FileDownloadStatus.INVALID_STATUS);
         mThrowable = null;
 
         mEtag = null;
@@ -432,7 +433,14 @@ public class DownloadTaskHunter implements ITaskHunter, ITaskHunter.IStarter, IT
         mSpeedMonitor.reset();
         free();
 
-        mMessenger.reAppointment(mTask.getRunningTask(), this);
+        if (FileDownloadStatus.isOver(mStatus)) {
+            mMessenger.discard();
+            mMessenger = new FileDownloadMessenger(mTask.getRunningTask(), this);
+        } else {
+            mMessenger.reAppointment(mTask.getRunningTask(), this);
+        }
+
+        mStatus = FileDownloadStatus.INVALID_STATUS;
     }
 
     @Override
@@ -523,16 +531,6 @@ public class DownloadTaskHunter implements ITaskHunter, ITaskHunter.IStarter, IT
             //noinspection ResultOfMethodCallIgnored
             dir.mkdirs();
         }
-    }
-
-    // Status, will changed before enqueue/dequeue/notify
-    private void setStatus(byte status) {
-        if (status > FileDownloadStatus.MAX_INT ||
-                status < FileDownloadStatus.MIN_INT) {
-            throw new RuntimeException(
-                    FileDownloadUtils.formatString("mStatus undefined, %d", status));
-        }
-        this.mStatus = status;
     }
 
     private int getId() {
