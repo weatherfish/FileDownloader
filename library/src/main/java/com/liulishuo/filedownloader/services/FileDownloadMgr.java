@@ -43,10 +43,7 @@ class FileDownloadMgr implements IThreadPoolMonitor {
     private final FileDownloadHelper.OutputStreamCreator mOutputStreamCreator;
     private final FileDownloadHelper.ConnectionCreator mConnectionCreator;
 
-    public FileDownloadMgr() {
-
-        final DownloadMgrInitialParams params = FileDownloadHelper.getDownloadMgrInitialParams();
-
+    public FileDownloadMgr(final DownloadMgrInitialParams params) {
         this.mDatabase = params.createDatabase();
         this.mThreadPool = new FileDownloadThreadPool(params.getMaxNetworkThreadCount());
         this.mOutputStreamCreator = params.createOutputStreamCreator();
@@ -59,6 +56,11 @@ class FileDownloadMgr implements IThreadPoolMonitor {
                                    final int callbackProgressMinIntervalMillis,
                                    final int autoRetryTimes, final boolean forceReDownload,
                                    final FileDownloadHeader header, final boolean isWifiRequired) {
+        if (FileDownloadLog.NEED_LOG) {
+            FileDownloadLog.d(this, "request start the task with url(%s) path(%s) isDirectory(%B)",
+                    url, path, pathAsDirectory);
+        }
+
         final int id = FileDownloadUtils.generateId(url, path, pathAsDirectory);
         FileDownloadModel model = mDatabase.find(id);
 
@@ -238,13 +240,13 @@ class FileDownloadMgr implements IThreadPoolMonitor {
     }
 
     public boolean pause(final int id) {
+        if (FileDownloadLog.NEED_LOG) {
+            FileDownloadLog.d(this, "request pause the task %d", id);
+        }
+
         final FileDownloadModel model = mDatabase.find(id);
         if (model == null) {
             return false;
-        }
-
-        if (FileDownloadLog.NEED_LOG) {
-            FileDownloadLog.d(this, "paused %d", id);
         }
 
         mThreadPool.cancel(id);

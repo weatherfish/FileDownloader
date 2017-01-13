@@ -75,7 +75,8 @@ public class DownloadTask implements BaseDownloadTask, BaseDownloadTask.IRunning
 
     DownloadTask(final String url) {
         this.mUrl = url;
-        final DownloadTaskHunter hunter = new DownloadTaskHunter(this);
+        mPauseLock = new Object();
+        final DownloadTaskHunter hunter = new DownloadTaskHunter(this, mPauseLock);
 
         mHunter = hunter;
         mMessageHandler = hunter;
@@ -263,22 +264,18 @@ public class DownloadTask implements BaseDownloadTask, BaseDownloadTask.IRunning
 
     @Override
     public boolean isUsing() {
-        return mHunter.isUsing() || FileDownloader.getImpl().getLostConnectedHandler().isInWaitingList(this);
+        return mHunter.getStatus() != FileDownloadStatus.INVALID_STATUS;
     }
 
 
     @Override
     public boolean isRunning() {
+        //noinspection SimplifiableIfStatement
         if (FileDownloader.getImpl().getLostConnectedHandler().isInWaitingList(this)) {
             return true;
         }
 
-        //noinspection SimplifiableIfStatement
-        if (!isUsing()) {
-            return false;
-        }
-
-        return FileDownloadStatus.isIng(getStatus()) || FileDownloadList.getImpl().contains(this);
+        return FileDownloadStatus.isIng(getStatus());
     }
 
     @Override
@@ -333,9 +330,13 @@ public class DownloadTask implements BaseDownloadTask, BaseDownloadTask.IRunning
 
     // -------------- Another Operations ---------------------
 
+    private final Object mPauseLock;
+
     @Override
     public boolean pause() {
-        return mHunter.pause();
+        synchronized (mPauseLock) {
+            return mHunter.pause();
+        }
     }
 
     @Override
@@ -558,7 +559,7 @@ public class DownloadTask implements BaseDownloadTask, BaseDownloadTask.IRunning
     @Override
     public void free() {
         mHunter.free();
-        if (!FileDownloadList.getImpl().contains(this)) {
+        if (FileDownloadList.getImpl().isNotContains(this)) {
             mIsMarkedAdded2List = false;
         }
     }
@@ -574,6 +575,11 @@ public class DownloadTask implements BaseDownloadTask, BaseDownloadTask.IRunning
         // task has already called start, but the filedownloader service didn't connected, and now,
         // the service is connected, so we just rescue this task.
         startTaskUnchecked();
+    }
+
+    @Override
+    public Object getPauseLock() {
+        return mPauseLock;
     }
 
 
