@@ -274,15 +274,16 @@ public class FileDownloadRunnable implements Runnable {
 
                 final boolean isSucceedStart =
                         code == HttpURLConnection.HTTP_OK || code == FileDownloadConnection.NO_RESPONSE_CODE;
+                // if the response status code isn't point to PARTIAL/OFFSET, isSucceedResume will
+                // be assigned to false, so filedownloader will download the file from very beginning.
                 final boolean isSucceedResume =
                         ((code == HttpURLConnection.HTTP_PARTIAL) || (code == FileDownloadConnection.RESPONSE_CODE_FROM_OFFSET))
                                 &&
                                 isResumeDownloadAvailable;
 
                 if (isResumeDownloadAvailable && !isSucceedResume) {
-                    FileDownloadLog.w(this, "tried to resume from the break point[%d], but the " +
-                                    "response code is %d, not 206(PARTIAL).", model.getSoFar(),
-                            code);
+                    FileDownloadLog.d(this, "want to resume from the breakpoint[%d], but the " +
+                            "response status code is[%d]", model.getSoFar(), code);
                 }
 
                 if (isSucceedStart || isSucceedResume) {
@@ -333,9 +334,14 @@ public class FileDownloadRunnable implements Runnable {
 
                     // Step 7, check whether has same task running after got filename from server/local generate.
                     if (model.isPathAsDirectory()) {
+                        // this scope for caring about the case of there is another task is provided
+                        // the same path to store file and the same url.
+
+                        // get the ID after got the filename.
                         final int fileCaseId = FileDownloadUtils.generateId(model.getUrl(),
                                 model.getTargetFilePath());
 
+                        // whether the file with the filename has been existed.
                         if (FileDownloadHelper.inspectAndInflowDownloaded(id,
                                 model.getTargetFilePath(), isForceReDownload, false)) {
                             helper.remove(id);
@@ -345,12 +351,18 @@ public class FileDownloadRunnable implements Runnable {
                         final FileDownloadModel fileCaseModel = helper.find(fileCaseId);
 
                         if (fileCaseModel != null) {
+                            // the task with the same file name and url has been exist.
+
+                            // whether the another task with the same file and url is downloading.
                             if (FileDownloadHelper.inspectAndInflowDownloading(id, fileCaseModel,
                                     threadPoolMonitor, false)) {
+                                //it has been post to upper layer the 'warn' message, so the current
+                                // task no need to continue download.
                                 helper.remove(id);
                                 break;
                             }
 
+                            // the another task with the same file name and url is paused
                             helper.remove(fileCaseId);
                             deleteTargetFile();
 
